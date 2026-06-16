@@ -1,6 +1,36 @@
 name = "ocr-api-bh-assurance"
 main = "src/index.js"
 compatibility_date = "2024-12-01"
+account_id = "6435a77d3ce17b7de468c6618e7b2b14"
 
-[vars]
-GEMINI_API_KEY = "AIzaSyB6O8Di2QI43BuGwpfua5FqWJtZJBnwp2E"
+[[d1_databases]]
+binding = "DB"
+database_name = "bulletins-db"
+database_id = "b88edbef-9af3-48da-a404-f543f798813b"
+
+# ============ DEV ============
+[env.dev]
+name = "ocr-api-bh-assurance-dev"
+
+[[env.dev.d1_databases]]
+binding = "DB"
+database_name = "bulletins-db-dev"
+database_id = "652534cf-d092-493b-807a-43b5a2b2552a"
+
+# ============ STAGING ============
+[env.staging]
+name = "ocr-api-bh-assurance-staging"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "bulletins-db"
+database_id = "b88edbef-9af3-48da-a404-f543f798813b"
+
+# ============ PROD ============
+[env.prod]
+name = "ocr-api-bh-assurance"
+
+[[env.prod.d1_databases]]
+binding = "DB"
+database_name = "bulletins-db-prod"
+database_id = "cf83b255-2739-4046-b34c-25ba6c278fd4"
