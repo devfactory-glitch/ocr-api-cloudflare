@@ -82,10 +82,60 @@ Le bulletin peut provenir de différents assureurs : BH Assurance, CARTE Assuran
 Identifie l'assureur via le logo, l'en-tête, la mise en page ou toute mention visible.
 Extrais avec précision TOUTES les informations visibles.
 
+🔍 LECTURE PRÉALABLE DES IMAGES (avant toute extraction) :
+A. Les scans sont souvent PIVOTÉS à 90°, 180° ou 270°. Redresse mentalement chaque image et lis-la dans le bon sens avant d'en extraire quoi que ce soit.
+B. IGNORE les pages qui ne contiennent que du texte INVERSÉ / EN MIROIR ou quelques traits résiduels : c'est la transparence du verso au scan, pas du contenu. Ne crée aucun acte à partir de ces pages.
+C. DOUBLONS : si deux images montrent le MÊME document (même numéro, même date, même total), c'est UN SEUL document scanné deux fois. Garde la version la plus lisible et IGNORE l'autre. N'additionne JAMAIS leurs montants.
+D. RECTO/VERSO : deux images du même formulaire d'assurance = un seul bulletin. Fusionne, ne duplique pas.
+
+🔍 PRIORITÉ DES SOURCES (du plus fiable au moins fiable) :
+E. 1) Facture ou note d'honoraires imprimée  2) Ticket informatique  3) Cachet officiel à l'encre  4) Manuscrit du bulletin. En cas de divergence, la source la plus haute l'emporte TOUJOURS.
+F. Les tampons dateurs à molette (ex: "0 8 JAN. 2026", "3 0 JUIN 2 6") sont des DATES, jamais des numéros de bulletin ni des montants.
+G. Un tampon de cabinet donne le nom du praticien ET sa Matricule Fiscale. Lis-le même s'il est incliné ou partiellement superposé à une signature.
+
+🔍 FORMAT DES MONTANTS (obligatoire) :
+H. Renvoie TOUS les montants avec un POINT décimal, SANS séparateur de milliers, 3 décimales : "1 307,477" → "1307.477" | "470,000" → "470.000" | "25.770" → "25.770" | "6,383" → "6.383".
+I. Sur une facture, distingue bien TOTAL TTC / AVANCE versée / NET À PAYER. Le champ "montant" = le TOTAL de la prestation, PAS le net à payer.
+
+🔍 CODIFICATION :
+J. La cotation peut être NON NUMÉRIQUE (ex: "Kc P1", "Z80", "B127"). Renvoie-la telle quelle en texte. Ne la convertis pas, ne l'invente pas.
+K. Cherche la lettre-clé sur les notes d'honoraires et lettres confidentielles (colonne "Codif. Acte", mention "codifié à Kc..."), pas seulement sur le BS.
+L. Si un élément est illisible, écris "[ILLISIBLE]". Ne devine jamais un montant, une cotation ou une matricule fiscale.
+
 🔴 RÈGLES D'AUTO-CORRECTION ET RECROISEMENT :
 1. Privilégie TOUJOURS les textes dactylographiés/imprimés (tickets de pharmacie, factures informatiques) pour écraser ou corriger l'écriture manuscrite brouillonne au recto des bulletins.
 2. Pour les praticiens, sors leur Nom/Prénom et leur MATRICULE FISCALE (M.F) en te basant EXCLUSIVEMENT sur les Cachets Officiels/Tampons à l'encre s'ils sont lisibles.
 3. Ne mélange PAS un "Médecin" (Consultation C, V) et un "Centre de RADIOLOGIE" (Echographie, Scanner, IRM). Utilise le bon "type" pour eux.
+3b. HIÉRARCHIE DE CLASSIFICATION DES ACTES (RÈGLE CRITIQUE) :
+   Pour déterminer le "type" d'un acte, suis cet ordre de priorité STRICT :
+   SOURCE N°1 — LETTRE CONFIDENTIELLE : si une lettre confidentielle est présente, sa codification détermine le type :
+     * Kc/KC → acte chirurgical/médical → type "MEDECIN" (même si fait en clinique)
+     * KE → exploration → type "MEDECIN"
+     * B → biologie → type "LABORATOIRE"
+     * Z/Rd → radiologie → type "RADIOLOGIE"
+     * D → dentaire → type "DENTAIRE"
+   SOURCE N°2 — SECTION DU BULLETIN REMPLIE : regarde quelle section du BS le médecin a remplie :
+     * "Consultations et Visites" ou "Actes Médicaux" → type "MEDECIN"
+     * "Biologie" → type "LABORATOIRE"
+     * "Hospitalisation" (avec date entrée + sortie + nuitée) → type "HOSPITALISATION"
+     * "Soins Dentaires" / "Prothèses Dentaires" → type "DENTAIRE"
+     * "Actes Paramédicaux" → type "PARAMEDICAL"
+     * "Pharmacie" → type "PHARMACIE"
+     * "Accouchement" → type "HOSPITALISATION"
+   SOURCE N°3 — FACTURE : sert UNIQUEMENT pour les montants et détails financiers. L'en-tête ou le titre d'une facture de clinique (ex: "Hospitalisation du ...") ne détermine JAMAIS le type de l'acte.
+3c. FACTURE DE CLINIQUE ≠ HOSPITALISATION :
+   Une facture émise par une clinique/hôpital (même avec compte_autrui, consommables, pharmacie interne) ne signifie PAS que l'acte est une hospitalisation. Beaucoup d'actes ambulatoires (TEC, FIV, chirurgie de jour, exploration, scanner) sont facturés par des cliniques avec cette structure sans qu'il y ait de séjour. Pour classifier en HOSPITALISATION, il faut des PREUVES DE SÉJOUR RÉEL :
+   - Date d'entrée DIFFÉRENTE de la date de sortie (au moins 1 nuitée)
+   - OU frais de séjour / chambre / lit sur la facture
+   - OU la section "Hospitalisation" du BS est remplie avec dates
+   Si aucune de ces preuves n'existe → l'acte est de type MEDECIN (ou RADIOLOGIE/LABORATOIRE selon la codification) et la facture clinique est une pièce justificative rattachée à cet acte.
+3d. LETTRE CONFIDENTIELLE = DOCUMENT DE RÉFÉRENCE :
+   Quand une lettre confidentielle est présente dans le dossier, elle PRIME sur tous les autres documents pour :
+   - La nature exacte de l'acte (TEC, accouchement, chirurgie, etc.)
+   - La codification CNAM (lettre-clé + cotation : Kc 20, KC 50, etc.)
+   - La date de l'acte
+   - L'identité du patient
+   Si la lettre confidentielle contredit la facture ou le BS → la lettre confidentielle GAGNE.
 4. Répare l'orthographe des noms de médicaments selon les factures imprimées, si manuscritement le code ou nom est mal recopié.
 5. REGROUPEMENT OBLIGATOIRE : Pour les actes de type "pharmacie" et "analyse biologique", regroupe TOUTES les lignes (médicaments ou analyses) d'un MÊME acte (même date, même pharmacie/labo) dans UN SEUL objet avec un tableau "details_lignes". Ne crée PAS un acte séparé par médicament ou par analyse.
 6. ULTIME RECOURS : Si le manuscrit est indéchiffrable et sans référence imprimée sur un autre document, utilise la mention "[ILLISIBLE]". AUCUNE INVENTION.
@@ -107,7 +157,7 @@ Extrais avec précision TOUTES les informations visibles.
      * "RECU" : reçu de paiement, ticket de caisse, quittance (montant payé, prestataire, date)
      * "FACTURE" : facture détaillée de pharmacie, labo, clinique (lignes, montants, TVA)
      * "COMPTE_RENDU" : compte-rendu médical, rapport radiologique, certificat médical
-     * "LETTRE_CONFIDENTIELLE" : lettre confidentielle de clinique (chirurgien, date hospitalisation/opération, motif, codification CNAM lettre-clé + cotation — ex: "Son acte est codifié à Kc P1")
+     * "LETTRE_CONFIDENTIELLE" : lettre confidentielle de clinique — DOCUMENT DE RÉFÉRENCE. Extraire INTÉGRALEMENT : chirurgien, date hospitalisation/opération, motif COMPLET (recopier TOUT le texte médical tel quel, ne JAMAIS tronquer ni résumer à un seul mot), acte réalisé (texte après "il/elle a subi"), codification CNAM lettre-clé + cotation (ex: "Son acte est codifié à Kc P1")
      * "AUTRE" : tout autre document justificatif non classifiable
    - Chaque pièce doit être rattachée à l'acte correspondant dans "actes_independants" via le champ "rattachement_acte" (index de l'acte dans le tableau, commençant à 0). Si aucun rattachement possible → null.
 10. CROISEMENT ORDONNANCES ↔ PHARMACIE : Si une ordonnance prescrit des médicaments et qu'un ticket de pharmacie les liste, vérifie la cohérence : les médicaments délivrés correspondent-ils à la prescription ? Signale les écarts dans "observations".
@@ -395,10 +445,46 @@ Retourne UNIQUEMENT ce JSON sans texte supplémentaire :
                   "chirurgien": "Nom du chirurgien",
                   "date_hospitalisation": "Date d'hospitalisation (JJ/MM/AAAA)",
                   "date_operation": "Date d'opération (JJ/MM/AAAA)",
-                  "motif": "Motif (accouchement, chirurgie, etc.)",
+                  "motif": "Motif COMPLET et INTÉGRAL tel qu'écrit sur la lettre — recopier TOUT le texte médical sans tronquer ni résumer (ex: 'Fibroscopie pour RGO du gastric, HP bactérie à éradiquer, kyste rectal à explorer'). Ne JAMAIS réduire à un seul mot.",
+                  "acte_realise": "Description COMPLÈTE de l'acte subi tel qu'écrit après 'il (elle) a subi' — recopier intégralement (ex: 'Gastroscopie avec biopsie et extraction polype')",
                   "codification_cnam": "Codification CNAM complète (ex: Kc P1)",
                   "lettre_cle": "Lettre-clé extraite (ex: KC)",
                   "cotation": "Cotation extraite (ex: P1)"
+                },
+                "facture_details": {
+                  "numero_facture": "Numéro de la facture",
+                  "date_facture": "Date de la facture (JJ/MM/AAAA)",
+                  "clinique": "Nom de la clinique/établissement",
+                  "matricule_fiscale": "MF de la clinique",
+                  "lignes_clinique": [
+                    {
+                      "designation": "Désignation EXACTE de la prestation (ex: FORFAIT BOX ENDOSCOPIE, BIOPSIE, PHARMACIE, FRAIS DE DOSSIER)",
+                      "quantite": "Quantité",
+                      "prix_unitaire": "Prix unitaire",
+                      "tva_pourcent": "Taux TVA (ex: 7%, 19%, 0%)",
+                      "montant_ht": "Montant HT",
+                      "montant_tva": "Montant TVA",
+                      "montant_ttc": "Montant TTC"
+                    }
+                  ],
+                  "total_clinique_ht": "Total HT des frais clinique",
+                  "total_clinique_tva": "Total TVA des frais clinique",
+                  "total_clinique_ttc": "Total TTC des frais clinique",
+                  "compte_autrui": [
+                    {
+                      "nom_prestataire": "Nom du prestataire externe",
+                      "matricule_fiscale": "MF du prestataire",
+                      "nature_acte": "Nature de l'acte (Acte médical, Laboratoire, Acte Endoscopie, etc.)",
+                      "montant_ht": "Montant HT",
+                      "montant_tva": "Montant TVA",
+                      "montant_ttc": "Montant TTC"
+                    }
+                  ],
+                  "total_compte_autrui": "Total TTC compte d'autrui",
+                  "timbre_fiscal": "Montant du timbre fiscal",
+                  "total_facture_ttc": "Total TTC de la facture (clinique + compte d'autrui + timbre)",
+                  "avance": "Avance versée par le patient (si visible)",
+                  "net_a_payer": "Net à payer ou à rembourser (si visible)"
                 }
               },
               "montant": "Montant figurant sur la pièce (si applicable)",
@@ -427,12 +513,12 @@ RÈGLES :
 - Chaque acte = un soin distinct.
 - "pharmacie", "analyse" : remplis ces sous-objets UNIQUEMENT si les données correspondantes existent sur le document. Si pas de données → ne mets pas la clé.
 - "cnam" : remplis ce bloc UNIQUEMENT si un document CNAM (décompte de remboursement) est présent dans les images. Si aucun document CNAM → ne mets pas la clé "cnam".
-- "pieces_justificatives" : remplis ce tableau UNIQUEMENT si des documents justificatifs (ordonnances, bilans, reçus, factures, comptes-rendus, lettres confidentielles) sont présents dans les images. Si aucun → tableau vide []. Dans "contenu", remplis UNIQUEMENT les sous-clés pertinentes au type de pièce : "medicaments_prescrits" pour ORDONNANCE, "resultats_bilan" pour BILAN, "lettre_confidentielle" pour LETTRE_CONFIDENTIELLE, "texte_libre" pour COMPTE_RENDU/AUTRE. Supprime les sous-clés non pertinentes.
+- "pieces_justificatives" : remplis ce tableau UNIQUEMENT si des documents justificatifs (ordonnances, bilans, reçus, factures, comptes-rendus, lettres confidentielles) sont présents dans les images. Si aucun → tableau vide []. Dans "contenu", remplis UNIQUEMENT les sous-clés pertinentes au type de pièce : "medicaments_prescrits" pour ORDONNANCE, "resultats_bilan" pour BILAN, "lettre_confidentielle" pour LETTRE_CONFIDENTIELLE, "facture_details" pour FACTURE de clinique/hôpital (extraire TOUTES les lignes détaillées : désignation, quantité, prix unitaire, TVA, montants HT/TTC, ainsi que le compte d'autrui et le timbre fiscal), "texte_libre" pour COMPTE_RENDU/AUTRE. Supprime les sous-clés non pertinentes.
 - "assureur_detecte" : identifie l'assureur via le logo, l'en-tête, la mise en page. Si non identifiable → "".
 - "numero_cnam" : cherche le champ "N° CNAM" ou "Adhésion N°" sur le bulletin. Distinct du "numero_adherent". Si non visible → "".
 - "employeur" : cherche le champ "Employeur" sur le bulletin. Si non visible → "".
 - "lettre_cle" et "cotation" : remplis sur TOUS les types d'actes (MEDECIN, RADIOLOGIE, LABORATOIRE, HOSPITALISATION, DENTAIRE, PARAMEDICAL) si la lettre-clé CNAM est visible sur le document (facture, reçu, bulletin, lettre confidentielle). Si non visible → "". Ne jamais inventer de cotation.
-- Pour HOSPITALISATION : "compte_autrui" est un tableau SÉPARÉ de "details_lignes". Les prestataires externes (médecins, anesthésiste, pharmacie, labo) vont dans "compte_autrui". Les prestations propres à la clinique (chambre, sage-femme, pharmacie interne) vont dans "details_lignes".
+- Pour HOSPITALISATION : type réservé EXCLUSIVEMENT aux séjours avec nuitée(s) confirmée(s). Preuves requises (au moins 1) : date_entree ≠ date_sortie, OU frais de séjour/chambre/lit sur la facture, OU section "Hospitalisation" du BS remplie avec dates. Une facture de clinique avec "Hospitalisation" en en-tête ou avec compte_autrui/consommables ne suffit PAS — vérifier les preuves de séjour réel. Si aucune preuve de séjour → utiliser le type de l'acte (MEDECIN, RADIOLOGIE, etc.) et rattacher la facture clinique comme pièce justificative. Quand confirmé HOSPITALISATION : "compte_autrui" est un tableau SÉPARÉ de "details_lignes". Les prestataires externes (médecins, anesthésiste, pharmacie, labo) vont dans "compte_autrui". Les prestations propres à la clinique (chambre, sage-femme, pharmacie interne) vont dans "details_lignes".
 - Pour DENTAIRE : le formulaire dentaire tunisien a 2 sections — "SOINS DENTAIRES" (soins conservateurs = DC) et "PROTHESE DENTAIRE" (prothèses = DP). Remplir "type_soin_dentaire" avec "DC" ou "DP" selon la section. Cette distinction est critique pour le calcul des plafonds. Extrais les numéros de dents du diagramme dentaire si visible. Lettre-clé = D.
 - Pour OPTIQUE : quand le prestataire est un opticien/lunettier ou que la facture contient montures/verres, utiliser type "OPTIQUE" (JAMAIS "PARAMEDICAL"). Séparer chaque ligne de la facture (monture, verres, traitements) dans "details_lignes". Si une ordonnance ophtalmologique est présente avec des corrections OD/OG, remplir "prescription_optique".
 - Pour PARAMEDICAL : lettre-clé = SC/SF pour sages-femmes, AMO/AMI/AMS pour infirmiers, TO/TM pour kiné.
@@ -451,10 +537,60 @@ Ces images peuvent inclure : un bulletin de soins, des reçus, des ordonnances, 
 
 Tu dois COMBINER toutes ces images pour produire UN SEUL dossier structuré et complet.
 
+🔍 LECTURE PRÉALABLE DES IMAGES (avant toute extraction) :
+A. Les scans sont souvent PIVOTÉS à 90°, 180° ou 270°. Redresse mentalement chaque image et lis-la dans le bon sens avant d'en extraire quoi que ce soit.
+B. IGNORE les pages qui ne contiennent que du texte INVERSÉ / EN MIROIR ou quelques traits résiduels : c'est la transparence du verso au scan, pas du contenu. Ne crée aucun acte à partir de ces pages.
+C. DOUBLONS : si deux images montrent le MÊME document (même numéro, même date, même total), c'est UN SEUL document scanné deux fois. Garde la version la plus lisible et IGNORE l'autre. N'additionne JAMAIS leurs montants.
+D. RECTO/VERSO : deux images du même formulaire d'assurance = un seul bulletin. Fusionne, ne duplique pas.
+
+🔍 PRIORITÉ DES SOURCES (du plus fiable au moins fiable) :
+E. 1) Facture ou note d'honoraires imprimée  2) Ticket informatique  3) Cachet officiel à l'encre  4) Manuscrit du bulletin. En cas de divergence, la source la plus haute l'emporte TOUJOURS.
+F. Les tampons dateurs à molette (ex: "0 8 JAN. 2026", "3 0 JUIN 2 6") sont des DATES, jamais des numéros de bulletin ni des montants.
+G. Un tampon de cabinet donne le nom du praticien ET sa Matricule Fiscale. Lis-le même s'il est incliné ou partiellement superposé à une signature.
+
+🔍 FORMAT DES MONTANTS (obligatoire) :
+H. Renvoie TOUS les montants avec un POINT décimal, SANS séparateur de milliers, 3 décimales : "1 307,477" → "1307.477" | "470,000" → "470.000" | "25.770" → "25.770" | "6,383" → "6.383".
+I. Sur une facture, distingue bien TOTAL TTC / AVANCE versée / NET À PAYER. Le champ "montant" = le TOTAL de la prestation, PAS le net à payer.
+
+🔍 CODIFICATION :
+J. La cotation peut être NON NUMÉRIQUE (ex: "Kc P1", "Z80", "B127"). Renvoie-la telle quelle en texte. Ne la convertis pas, ne l'invente pas.
+K. Cherche la lettre-clé sur les notes d'honoraires et lettres confidentielles (colonne "Codif. Acte", mention "codifié à Kc..."), pas seulement sur le BS.
+L. Si un élément est illisible, écris "[ILLISIBLE]". Ne devine jamais un montant, une cotation ou une matricule fiscale.
+
 🔴 RÈGLES D'AUTO-CORRECTION ET RECROISEMENT :
 1. Privilégie TOUJOURS les textes dactylographiés/imprimés (tickets de pharmacie, factures informatiques) pour écraser ou corriger l'écriture manuscrite brouillonne au recto des bulletins.
 2. Pour les praticiens, sors leur Nom/Prénom et leur MATRICULE FISCALE (M.F) en te basant EXCLUSIVEMENT sur les Cachets Officiels/Tampons à l'encre s'ils sont lisibles.
 3. Ne mélange PAS un "Médecin" (Consultation C, V) et un "Centre de RADIOLOGIE" (Echographie, Scanner, IRM). Utilise le bon "type" pour eux.
+3b. HIÉRARCHIE DE CLASSIFICATION DES ACTES (RÈGLE CRITIQUE) :
+   Pour déterminer le "type" d'un acte, suis cet ordre de priorité STRICT :
+   SOURCE N°1 — LETTRE CONFIDENTIELLE : si une lettre confidentielle est présente, sa codification détermine le type :
+     * Kc/KC → acte chirurgical/médical → type "MEDECIN" (même si fait en clinique)
+     * KE → exploration → type "MEDECIN"
+     * B → biologie → type "LABORATOIRE"
+     * Z/Rd → radiologie → type "RADIOLOGIE"
+     * D → dentaire → type "DENTAIRE"
+   SOURCE N°2 — SECTION DU BULLETIN REMPLIE : regarde quelle section du BS le médecin a remplie :
+     * "Consultations et Visites" ou "Actes Médicaux" → type "MEDECIN"
+     * "Biologie" → type "LABORATOIRE"
+     * "Hospitalisation" (avec date entrée + sortie + nuitée) → type "HOSPITALISATION"
+     * "Soins Dentaires" / "Prothèses Dentaires" → type "DENTAIRE"
+     * "Actes Paramédicaux" → type "PARAMEDICAL"
+     * "Pharmacie" → type "PHARMACIE"
+     * "Accouchement" → type "HOSPITALISATION"
+   SOURCE N°3 — FACTURE : sert UNIQUEMENT pour les montants et détails financiers. L'en-tête ou le titre d'une facture de clinique (ex: "Hospitalisation du ...") ne détermine JAMAIS le type de l'acte.
+3c. FACTURE DE CLINIQUE ≠ HOSPITALISATION :
+   Une facture émise par une clinique/hôpital (même avec compte_autrui, consommables, pharmacie interne) ne signifie PAS que l'acte est une hospitalisation. Beaucoup d'actes ambulatoires (TEC, FIV, chirurgie de jour, exploration, scanner) sont facturés par des cliniques avec cette structure sans qu'il y ait de séjour. Pour classifier en HOSPITALISATION, il faut des PREUVES DE SÉJOUR RÉEL :
+   - Date d'entrée DIFFÉRENTE de la date de sortie (au moins 1 nuitée)
+   - OU frais de séjour / chambre / lit sur la facture
+   - OU la section "Hospitalisation" du BS est remplie avec dates
+   Si aucune de ces preuves n'existe → l'acte est de type MEDECIN (ou RADIOLOGIE/LABORATOIRE selon la codification) et la facture clinique est une pièce justificative rattachée à cet acte.
+3d. LETTRE CONFIDENTIELLE = DOCUMENT DE RÉFÉRENCE :
+   Quand une lettre confidentielle est présente dans le dossier, elle PRIME sur tous les autres documents pour :
+   - La nature exacte de l'acte (TEC, accouchement, chirurgie, etc.)
+   - La codification CNAM (lettre-clé + cotation : Kc 20, KC 50, etc.)
+   - La date de l'acte
+   - L'identité du patient
+   Si la lettre confidentielle contredit la facture ou le BS → la lettre confidentielle GAGNE.
 4. Répare l'orthographe des noms de médicaments selon les factures imprimées, si manuscritement le code ou nom est mal recopié.
 5. REGROUPEMENT OBLIGATOIRE : Pour PHARMACIE et LABORATOIRE, regroupe TOUTES les lignes (médicaments ou analyses) d'un MÊME acte (même date, même pharmacie/labo) dans UN SEUL objet avec un tableau "details_lignes". Ne crée PAS un objet séparé par médicament ou par analyse.
 6. ULTIME RECOURS : Si le manuscrit est indéchiffrable et sans référence imprimée sur un autre document, utilise la mention "[ILLISIBLE]". AUCUNE INVENTION.
@@ -476,7 +612,7 @@ Tu dois COMBINER toutes ces images pour produire UN SEUL dossier structuré et c
      * "RECU" : reçu de paiement, ticket de caisse, quittance (montant payé, prestataire, date)
      * "FACTURE" : facture détaillée de pharmacie, labo, clinique (lignes, montants, TVA)
      * "COMPTE_RENDU" : compte-rendu médical, rapport radiologique, certificat médical
-     * "LETTRE_CONFIDENTIELLE" : lettre confidentielle de clinique (chirurgien, date hospitalisation/opération, motif, codification CNAM lettre-clé + cotation — ex: "Son acte est codifié à Kc P1")
+     * "LETTRE_CONFIDENTIELLE" : lettre confidentielle de clinique — DOCUMENT DE RÉFÉRENCE. Extraire INTÉGRALEMENT : chirurgien, date hospitalisation/opération, motif COMPLET (recopier TOUT le texte médical tel quel, ne JAMAIS tronquer ni résumer à un seul mot), acte réalisé (texte après "il/elle a subi"), codification CNAM lettre-clé + cotation (ex: "Son acte est codifié à Kc P1")
      * "AUTRE" : tout autre document justificatif non classifiable
    - Chaque pièce doit être rattachée à l'acte correspondant dans "actes_independants" via le champ "rattachement_acte" (index de l'acte dans le tableau, commençant à 0). Si aucun rattachement possible → null.
 10. CROISEMENT ORDONNANCES ↔ PHARMACIE : Si une ordonnance prescrit des médicaments et qu'un ticket de pharmacie les liste, vérifie la cohérence : les médicaments délivrés correspondent-ils à la prescription ? Signale les écarts dans "observations".
@@ -771,10 +907,46 @@ Retourne UNIQUEMENT ce JSON :
                   "chirurgien": "Nom du chirurgien",
                   "date_hospitalisation": "Date d'hospitalisation (JJ/MM/AAAA)",
                   "date_operation": "Date d'opération (JJ/MM/AAAA)",
-                  "motif": "Motif (accouchement, chirurgie, etc.)",
+                  "motif": "Motif COMPLET et INTÉGRAL tel qu'écrit sur la lettre — recopier TOUT le texte médical sans tronquer ni résumer (ex: 'Fibroscopie pour RGO du gastric, HP bactérie à éradiquer, kyste rectal à explorer'). Ne JAMAIS réduire à un seul mot.",
+                  "acte_realise": "Description COMPLÈTE de l'acte subi tel qu'écrit après 'il (elle) a subi' — recopier intégralement (ex: 'Gastroscopie avec biopsie et extraction polype')",
                   "codification_cnam": "Codification CNAM complète (ex: Kc P1)",
                   "lettre_cle": "Lettre-clé extraite (ex: KC)",
                   "cotation": "Cotation extraite (ex: P1)"
+                },
+                "facture_details": {
+                  "numero_facture": "Numéro de la facture",
+                  "date_facture": "Date de la facture (JJ/MM/AAAA)",
+                  "clinique": "Nom de la clinique/établissement",
+                  "matricule_fiscale": "MF de la clinique",
+                  "lignes_clinique": [
+                    {
+                      "designation": "Désignation EXACTE de la prestation (ex: FORFAIT BOX ENDOSCOPIE, BIOPSIE, PHARMACIE, FRAIS DE DOSSIER)",
+                      "quantite": "Quantité",
+                      "prix_unitaire": "Prix unitaire",
+                      "tva_pourcent": "Taux TVA (ex: 7%, 19%, 0%)",
+                      "montant_ht": "Montant HT",
+                      "montant_tva": "Montant TVA",
+                      "montant_ttc": "Montant TTC"
+                    }
+                  ],
+                  "total_clinique_ht": "Total HT des frais clinique",
+                  "total_clinique_tva": "Total TVA des frais clinique",
+                  "total_clinique_ttc": "Total TTC des frais clinique",
+                  "compte_autrui": [
+                    {
+                      "nom_prestataire": "Nom du prestataire externe",
+                      "matricule_fiscale": "MF du prestataire",
+                      "nature_acte": "Nature de l'acte (Acte médical, Laboratoire, Acte Endoscopie, etc.)",
+                      "montant_ht": "Montant HT",
+                      "montant_tva": "Montant TVA",
+                      "montant_ttc": "Montant TTC"
+                    }
+                  ],
+                  "total_compte_autrui": "Total TTC compte d'autrui",
+                  "timbre_fiscal": "Montant du timbre fiscal",
+                  "total_facture_ttc": "Total TTC de la facture (clinique + compte d'autrui + timbre)",
+                  "avance": "Avance versée par le patient (si visible)",
+                  "net_a_payer": "Net à payer ou à rembourser (si visible)"
                 }
               },
               "montant": "Montant figurant sur la pièce (si applicable)",
@@ -803,12 +975,12 @@ RÈGLES :
 - Chaque acte = un soin distinct. Si le bulletin montre une ligne "consultation" et qu'une ordonnance du même médecin existe → c'est le MÊME acte, mets l'ordonnance DANS cet acte.
 - "ordonnance", "pharmacie", "analyse" : remplis ces sous-objets UNIQUEMENT si un document correspondant existe dans les images. Si pas de document → ne mets pas la clé.
 - "cnam" : remplis ce bloc UNIQUEMENT si un document CNAM (décompte de remboursement) est présent dans les images. Si aucun document CNAM → ne mets pas la clé "cnam".
-- "pieces_justificatives" : remplis ce tableau UNIQUEMENT si des documents justificatifs (ordonnances, bilans, reçus, factures, comptes-rendus, lettres confidentielles) sont présents dans les images. Si aucun → tableau vide []. Dans "contenu", remplis UNIQUEMENT les sous-clés pertinentes au type de pièce : "medicaments_prescrits" pour ORDONNANCE, "resultats_bilan" pour BILAN, "lettre_confidentielle" pour LETTRE_CONFIDENTIELLE, "texte_libre" pour COMPTE_RENDU/AUTRE. Supprime les sous-clés non pertinentes.
+- "pieces_justificatives" : remplis ce tableau UNIQUEMENT si des documents justificatifs (ordonnances, bilans, reçus, factures, comptes-rendus, lettres confidentielles) sont présents dans les images. Si aucun → tableau vide []. Dans "contenu", remplis UNIQUEMENT les sous-clés pertinentes au type de pièce : "medicaments_prescrits" pour ORDONNANCE, "resultats_bilan" pour BILAN, "lettre_confidentielle" pour LETTRE_CONFIDENTIELLE, "facture_details" pour FACTURE de clinique/hôpital (extraire TOUTES les lignes détaillées : désignation, quantité, prix unitaire, TVA, montants HT/TTC, ainsi que le compte d'autrui et le timbre fiscal), "texte_libre" pour COMPTE_RENDU/AUTRE. Supprime les sous-clés non pertinentes.
 - "assureur_detecte" : identifie l'assureur via le logo, l'en-tête, la mise en page. Si non identifiable → "".
 - "numero_cnam" : cherche le champ "N° CNAM" ou "Adhésion N°" sur le bulletin. Distinct du "numero_adherent". Si non visible → "".
 - "employeur" : cherche le champ "Employeur" sur le bulletin. Si non visible → "".
 - "lettre_cle" et "cotation" : remplis sur TOUS les types d'actes (MEDECIN, RADIOLOGIE, LABORATOIRE, HOSPITALISATION, DENTAIRE, PARAMEDICAL) si la lettre-clé CNAM est visible sur le document (facture, reçu, bulletin, lettre confidentielle). Si non visible → "". Ne jamais inventer de cotation.
-- Pour HOSPITALISATION : "compte_autrui" est un tableau SÉPARÉ de "details_lignes". Les prestataires externes (médecins, anesthésiste, pharmacie, labo) vont dans "compte_autrui". Les prestations propres à la clinique (chambre, sage-femme, pharmacie interne) vont dans "details_lignes".
+- Pour HOSPITALISATION : type réservé EXCLUSIVEMENT aux séjours avec nuitée(s) confirmée(s). Preuves requises (au moins 1) : date_entree ≠ date_sortie, OU frais de séjour/chambre/lit sur la facture, OU section "Hospitalisation" du BS remplie avec dates. Une facture de clinique avec "Hospitalisation" en en-tête ou avec compte_autrui/consommables ne suffit PAS — vérifier les preuves de séjour réel. Si aucune preuve de séjour → utiliser le type de l'acte (MEDECIN, RADIOLOGIE, etc.) et rattacher la facture clinique comme pièce justificative. Quand confirmé HOSPITALISATION : "compte_autrui" est un tableau SÉPARÉ de "details_lignes". Les prestataires externes (médecins, anesthésiste, pharmacie, labo) vont dans "compte_autrui". Les prestations propres à la clinique (chambre, sage-femme, pharmacie interne) vont dans "details_lignes".
 - Pour DENTAIRE : le formulaire dentaire tunisien a 2 sections — "SOINS DENTAIRES" (soins conservateurs = DC) et "PROTHESE DENTAIRE" (prothèses = DP). Remplir "type_soin_dentaire" avec "DC" ou "DP" selon la section. Cette distinction est critique pour le calcul des plafonds. Extrais les numéros de dents du diagramme dentaire si visible. Lettre-clé = D.
 - Pour OPTIQUE : quand le prestataire est un opticien/lunettier ou que la facture contient montures/verres, utiliser type "OPTIQUE" (JAMAIS "PARAMEDICAL"). Séparer chaque ligne de la facture (monture, verres, traitements) dans "details_lignes". Si une ordonnance ophtalmologique est présente avec des corrections OD/OG, remplir "prescription_optique".
 - Pour PARAMEDICAL : lettre-clé = SC/SF pour sages-femmes, AMO/AMI/AMS pour infirmiers, TO/TM pour kiné.
