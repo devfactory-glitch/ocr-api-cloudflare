@@ -101,6 +101,14 @@ I. Sur une facture, distingue bien TOTAL TTC / AVANCE versée / NET À PAYER. Le
 J. La cotation peut être NON NUMÉRIQUE (ex: "Kc P1", "Z80", "B127"). Renvoie-la telle quelle en texte. Ne la convertis pas, ne l'invente pas.
 K. Cherche la lettre-clé sur les notes d'honoraires et lettres confidentielles (colonne "Codif. Acte", mention "codifié à Kc..."), pas seulement sur le BS.
 L. Si un élément est illisible, écris "[ILLISIBLE]". Ne devine jamais un montant, une cotation ou une matricule fiscale.
+M. SÉPARATION OBLIGATOIRE lettre-clé / coefficient : le champ "lettre_cle" doit contenir UNIQUEMENT la partie alphabétique (ex: "Ke", "KC", "CS", "B", "Z", "D"). Le coefficient numérique va SÉPARÉMENT dans le champ "cotation" (ex: "40", "50", "120"). Exemples de séparation correcte :
+   - Document montre "Ke 40"  → lettre_cle: "Ke",  cotation: "40"
+   - Document montre "B120"   → lettre_cle: "B",   cotation: "120"
+   - Document montre "KC50"   → lettre_cle: "KC",  cotation: "50"
+   - Document montre "Z25"    → lettre_cle: "Z",   cotation: "25"
+   - Document montre "CS"     → lettre_cle: "CS",  cotation: ""
+   - Document montre "Kc P1"  → lettre_cle: "KC",  cotation: "P1"
+   NE JAMAIS mettre le coefficient dans lettre_cle (ex: "Ke 40" dans lettre_cle est INTERDIT).
 
 🔴 RÈGLES D'AUTO-CORRECTION ET RECROISEMENT :
 1. Privilégie TOUJOURS les textes dactylographiés/imprimés (tickets de pharmacie, factures informatiques) pour écraser ou corriger l'écriture manuscrite brouillonne au recto des bulletins.
@@ -191,6 +199,9 @@ L. Si un élément est illisible, écris "[ILLISIBLE]". Ne devine jamais un mont
 
 🔵 CODES CNAM ET LETTRES-CLÉS (pour auto-complétion côté plateforme) :
 15. Pour chaque acte médical extrait, cherche à identifier la LETTRE-CLÉ CNAM si elle est visible sur le document :
+   * C = consultation généraliste
+   * CS = consultation spécialiste (DIFFÉRENT de C — important pour le calcul du remboursement)
+   * V = visite à domicile
    * KC = actes chirurgicaux (ex: KC50 pour une suture)
    * KE = actes d'explorations (endoscopie, biopsie)
    * K = actes techniques médicaux
@@ -202,6 +213,7 @@ L. Si un élément est illisible, écris "[ILLISIBLE]". Ne devine jamais un mont
    * SC, SF = actes de sages-femmes
    * AMO, AMI, AMS = actes infirmiers
    * TO, TM = actes de rééducation (kiné)
+   * APR = actes de rééducation / kinésithérapie
    - La cotation est le NOMBRE qui suit la lettre-clé (ex: dans "KC50", la lettre_cle est "KC" et la cotation est 50).
    - Sur les factures de laboratoire, la cotation est souvent visible (ex: "B40", "B60", "B127").
    - Sur les factures de radiologie, cherche le code Rd ou Z (ex: "Rd15", "Z30").
@@ -213,6 +225,9 @@ L. Si un élément est illisible, écris "[ILLISIBLE]". Ne devine jamais un mont
    - Si la facture est une facture globale d'hospitalisation/clinique avec des postes génériques (Consommables, Pharmacie Interne, Timbre Fiscal, Frais de séjour), extraire ces postes tels quels — ce sont des postes hospitaliers, pas des actes CNAM.
    - Pour les analyses biologiques : TOUJOURS détailler chaque analyse séparément dans details_lignes, avec sa cotation B si visible.
    - Pour la radiologie : TOUJOURS préciser le type exact (Échographie abdominale, Radio thorax face, Scanner cérébral...) plutôt que "Radiologie" ou "Imagerie".
+   - Pour les actes MEDECIN : si la facture/note d'honoraires détaille PLUSIEURS prestations (ex: consultation + acte technique, ou consultation + ECG), les lister dans "details_lignes" avec chacune sa désignation, son code_acte et son montant. Le champ "montant" de l'acte principal = le TOTAL de toutes les lignes.
+   - Pour la RADIOLOGIE : si la facture liste PLUSIEURS examens (ex: Radio + Écho + TDM), les lister dans "details_lignes". Le champ "montant" = TOTAL.
+   - Si la facture ne montre qu'un montant global sans détail ligne par ligne, NE PAS créer de details_lignes — laisser le champ absent.
 
 🔵 REGROUPEMENT PHARMACIE RENFORCÉ :
 17. UN acte PHARMACIE = UN ticket/facture d'UNE pharmacie à UNE date.
@@ -254,8 +269,16 @@ Retourne UNIQUEMENT ce JSON sans texte supplémentaire :
               "praticien": "Nom du médecin traitant",
               "matricule_fiscale": "...",
               "acte": "Désignation EXACTE (ex: Consultation spécialisée cardiologie, Visite à domicile)",
-              "lettre_cle": "KC ou K ou KE ou C ou V si visible",
+              "lettre_cle": "KC ou K ou KE ou C ou CS ou V si visible",
               "cotation": "Nombre après la lettre-clé (ex: 50 pour KC50)",
+              "details_lignes": [
+                {
+                  "designation": "Désignation EXACTE de chaque prestation sur la facture",
+                  "code_acte": "Lettre-clé de cette ligne si visible (ex: CS, Ke, KC)",
+                  "cotation": "Coefficient de cette ligne",
+                  "montant": "Montant de cette ligne"
+                }
+              ],
               "montant": "...",
               "montant_cnam": "Montant remboursé CNAM pour cet acte (si décompte CNAM présent)",
               "accord_prealable": false
@@ -269,6 +292,14 @@ Retourne UNIQUEMENT ce JSON sans texte supplémentaire :
               "acte": "Désignation EXACTE (ex: Échographie abdominale, Radio thorax face, Scanner cérébral)",
               "lettre_cle": "Rd ou Z si visible",
               "cotation": "Nombre après la lettre-clé (ex: 15 pour Rd15)",
+              "details_lignes": [
+                {
+                  "designation": "Désignation EXACTE de chaque examen (ex: TDM abdominale, Échographie pelvienne)",
+                  "code_acte": "Code CNAM si visible (ex: Z, Rd)",
+                  "cotation": "Coefficient",
+                  "montant": "Montant de cette ligne"
+                }
+              ],
               "montant": "...",
               "montant_cnam": "Montant remboursé CNAM pour cet acte (si décompte CNAM présent)",
               "accord_prealable": false
@@ -320,6 +351,7 @@ Retourne UNIQUEMENT ce JSON sans texte supplémentaire :
               "details_lignes": [
                 {
                   "prestation": "Désignation EXACTE (ex: CHAMBRE INDIVIDUELLE, RCF CONTINUE, ASSISTANCE SAGE-FEMME)",
+                  "code_acte": "Code sous-acte si identifiable (ex: HP pour hébergement, CL pour frais clinique, REA pour réanimation)",
                   "quantite": "Quantité",
                   "prix_unitaire": "Prix unitaire",
                   "tva": "Taux TVA si visible",
@@ -556,6 +588,14 @@ I. Sur une facture, distingue bien TOTAL TTC / AVANCE versée / NET À PAYER. Le
 J. La cotation peut être NON NUMÉRIQUE (ex: "Kc P1", "Z80", "B127"). Renvoie-la telle quelle en texte. Ne la convertis pas, ne l'invente pas.
 K. Cherche la lettre-clé sur les notes d'honoraires et lettres confidentielles (colonne "Codif. Acte", mention "codifié à Kc..."), pas seulement sur le BS.
 L. Si un élément est illisible, écris "[ILLISIBLE]". Ne devine jamais un montant, une cotation ou une matricule fiscale.
+M. SÉPARATION OBLIGATOIRE lettre-clé / coefficient : le champ "lettre_cle" doit contenir UNIQUEMENT la partie alphabétique (ex: "Ke", "KC", "CS", "B", "Z", "D"). Le coefficient numérique va SÉPARÉMENT dans le champ "cotation" (ex: "40", "50", "120"). Exemples de séparation correcte :
+   - Document montre "Ke 40"  → lettre_cle: "Ke",  cotation: "40"
+   - Document montre "B120"   → lettre_cle: "B",   cotation: "120"
+   - Document montre "KC50"   → lettre_cle: "KC",  cotation: "50"
+   - Document montre "Z25"    → lettre_cle: "Z",   cotation: "25"
+   - Document montre "CS"     → lettre_cle: "CS",  cotation: ""
+   - Document montre "Kc P1"  → lettre_cle: "KC",  cotation: "P1"
+   NE JAMAIS mettre le coefficient dans lettre_cle (ex: "Ke 40" dans lettre_cle est INTERDIT).
 
 🔴 RÈGLES D'AUTO-CORRECTION ET RECROISEMENT :
 1. Privilégie TOUJOURS les textes dactylographiés/imprimés (tickets de pharmacie, factures informatiques) pour écraser ou corriger l'écriture manuscrite brouillonne au recto des bulletins.
@@ -646,6 +686,9 @@ L. Si un élément est illisible, écris "[ILLISIBLE]". Ne devine jamais un mont
 
 🔵 CODES CNAM ET LETTRES-CLÉS (pour auto-complétion côté plateforme) :
 15. Pour chaque acte médical extrait, cherche à identifier la LETTRE-CLÉ CNAM si elle est visible sur le document :
+   * C = consultation généraliste
+   * CS = consultation spécialiste (DIFFÉRENT de C — important pour le calcul du remboursement)
+   * V = visite à domicile
    * KC = actes chirurgicaux (ex: KC50 pour une suture)
    * KE = actes d'explorations (endoscopie, biopsie)
    * K = actes techniques médicaux
@@ -657,6 +700,7 @@ L. Si un élément est illisible, écris "[ILLISIBLE]". Ne devine jamais un mont
    * SC, SF = actes de sages-femmes
    * AMO, AMI, AMS = actes infirmiers
    * TO, TM = actes de rééducation (kiné)
+   * APR = actes de rééducation / kinésithérapie
    - La cotation est le NOMBRE qui suit la lettre-clé (ex: dans "KC50", la lettre_cle est "KC" et la cotation est 50).
    - Sur les factures de laboratoire, la cotation est souvent visible (ex: "B40", "B60", "B127").
    - Sur les factures de radiologie, cherche le code Rd ou Z (ex: "Rd15", "Z30").
@@ -668,6 +712,9 @@ L. Si un élément est illisible, écris "[ILLISIBLE]". Ne devine jamais un mont
    - Si la facture est une facture globale d'hospitalisation/clinique avec des postes génériques (Consommables, Pharmacie Interne, Timbre Fiscal, Frais de séjour), extraire ces postes tels quels — ce sont des postes hospitaliers, pas des actes CNAM.
    - Pour les analyses biologiques : TOUJOURS détailler chaque analyse séparément dans details_lignes, avec sa cotation B si visible.
    - Pour la radiologie : TOUJOURS préciser le type exact (Échographie abdominale, Radio thorax face, Scanner cérébral...) plutôt que "Radiologie" ou "Imagerie".
+   - Pour les actes MEDECIN : si la facture/note d'honoraires détaille PLUSIEURS prestations (ex: consultation + acte technique, ou consultation + ECG), les lister dans "details_lignes" avec chacune sa désignation, son code_acte et son montant. Le champ "montant" de l'acte principal = le TOTAL de toutes les lignes.
+   - Pour la RADIOLOGIE : si la facture liste PLUSIEURS examens (ex: Radio + Écho + TDM), les lister dans "details_lignes". Le champ "montant" = TOTAL.
+   - Si la facture ne montre qu'un montant global sans détail ligne par ligne, NE PAS créer de details_lignes — laisser le champ absent.
 
 🔵 REGROUPEMENT PHARMACIE RENFORCÉ :
 17. UN acte PHARMACIE = UN ticket/facture d'UNE pharmacie à UNE date.
@@ -716,8 +763,16 @@ Retourne UNIQUEMENT ce JSON :
               "praticien": "Nom du médecin traitant",
               "matricule_fiscale": "...",
               "acte": "Désignation EXACTE (ex: Consultation spécialisée cardiologie, Visite à domicile)",
-              "lettre_cle": "KC ou K ou KE ou C ou V si visible",
+              "lettre_cle": "KC ou K ou KE ou C ou CS ou V si visible",
               "cotation": "Nombre après la lettre-clé (ex: 50 pour KC50)",
+              "details_lignes": [
+                {
+                  "designation": "Désignation EXACTE de chaque prestation sur la facture",
+                  "code_acte": "Lettre-clé de cette ligne si visible (ex: CS, Ke, KC)",
+                  "cotation": "Coefficient de cette ligne",
+                  "montant": "Montant de cette ligne"
+                }
+              ],
               "montant": "...",
               "montant_cnam": "Montant remboursé CNAM pour cet acte (si décompte CNAM présent)",
               "accord_prealable": false
@@ -731,6 +786,14 @@ Retourne UNIQUEMENT ce JSON :
               "acte": "Désignation EXACTE (ex: Échographie abdominale, Radio thorax face, Scanner cérébral)",
               "lettre_cle": "Rd ou Z si visible",
               "cotation": "Nombre après la lettre-clé (ex: 15 pour Rd15)",
+              "details_lignes": [
+                {
+                  "designation": "Désignation EXACTE de chaque examen (ex: TDM abdominale, Échographie pelvienne)",
+                  "code_acte": "Code CNAM si visible (ex: Z, Rd)",
+                  "cotation": "Coefficient",
+                  "montant": "Montant de cette ligne"
+                }
+              ],
               "montant": "...",
               "montant_cnam": "Montant remboursé CNAM pour cet acte (si décompte CNAM présent)",
               "accord_prealable": false
@@ -782,6 +845,7 @@ Retourne UNIQUEMENT ce JSON :
               "details_lignes": [
                 {
                   "prestation": "Désignation EXACTE (ex: CHAMBRE INDIVIDUELLE, RCF CONTINUE, ASSISTANCE SAGE-FEMME)",
+                  "code_acte": "Code sous-acte si identifiable (ex: HP pour hébergement, CL pour frais clinique, REA pour réanimation)",
                   "quantite": "Quantité",
                   "prix_unitaire": "Prix unitaire",
                   "tva": "Taux TVA si visible",
