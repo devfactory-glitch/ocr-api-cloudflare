@@ -252,8 +252,9 @@ Retourne UNIQUEMENT ce JSON sans texte supplémentaire :
           "infos_adherent": {
             "assureur_detecte": "BH Assurance | CARTE Assurances | CNAM | STAR | GAT | autre (détecté via logo/en-tête)",
             "nom_prenom": "Nom de l'adhérent",
-            "numero_adherent": "N° de l'adhérent (N° contrat/police)",
-            "numero_cnam": "N° CNAM de l'adhérent (champ N° CNAM / Adhésion N° sur le bulletin)",
+            "numero_adherent": "N° de l'adhérent — c'est le numéro imprimé dans le champ 'N° Adhérent' du bulletin de l'ASSUREUR. Ce n'est PAS le numéro de contrat ni le numéro CNAM. Si un seul numéro est visible avec un slash (ex: 27433/1249), prendre le numéro COMPLET tel quel.",
+            "numero_contrat": "N° de contrat — c'est le numéro imprimé dans le champ 'Contrat N°' ou 'Police N°' du bulletin. C'est DIFFÉRENT du numero_adherent. Si non visible → ''.",
+            "numero_cnam": "N° CNAM de l'adhérent — c'est le numéro du régime CNAM, typiquement au format long (ex: 1688627809, 1/25498/84). Chercher dans le champ 'N° CNAM', 'CNAM', 'Identifiant Social', 'Adhésion N°' (sur BS CNAM uniquement). NE PAS confondre avec le numero_adherent ni le numero_contrat. Si non visible → ''.",
             "employeur": "Nom de l'employeur (champ Employeur sur le bulletin)",
             "numero_bulletin": "N° du bulletin (PRIORITÉ HAUTE — chercher manuscrit, tampon, champ N° BS)",
             "date_bulletin": "Date du bulletin (JJ/MM/AAAA)",
@@ -547,7 +548,9 @@ RÈGLES :
 - "cnam" : remplis ce bloc UNIQUEMENT si un document CNAM (décompte de remboursement) est présent dans les images. Si aucun document CNAM → ne mets pas la clé "cnam".
 - "pieces_justificatives" : remplis ce tableau UNIQUEMENT si des documents justificatifs (ordonnances, bilans, reçus, factures, comptes-rendus, lettres confidentielles) sont présents dans les images. Si aucun → tableau vide []. Dans "contenu", remplis UNIQUEMENT les sous-clés pertinentes au type de pièce : "medicaments_prescrits" pour ORDONNANCE, "resultats_bilan" pour BILAN, "lettre_confidentielle" pour LETTRE_CONFIDENTIELLE, "facture_details" pour FACTURE de clinique/hôpital (extraire TOUTES les lignes détaillées : désignation, quantité, prix unitaire, TVA, montants HT/TTC, ainsi que le compte d'autrui et le timbre fiscal), "texte_libre" pour COMPTE_RENDU/AUTRE. Supprime les sous-clés non pertinentes.
 - "assureur_detecte" : identifie l'assureur via le logo, l'en-tête, la mise en page. Si non identifiable → "".
-- "numero_cnam" : cherche le champ "N° CNAM" ou "Adhésion N°" sur le bulletin. Distinct du "numero_adherent". Si non visible → "".
+- "numero_adherent" : c'est le numéro d'adhérent, imprimé dans le champ "N° Adhérent". C'est DIFFÉRENT du numéro de contrat ("Contrat N°" / "Police N°") et du numéro CNAM.
+- "numero_contrat" : c'est le numéro de contrat/police, imprimé dans le champ "Contrat N°" ou "Police N°". C'est DIFFÉRENT du numero_adherent. Si non visible → "".
+- "numero_cnam" : c'est le numéro CNAM (régime obligatoire), format long (ex: 1688627809, 1/25498/84). Le chercher dans les champs "N° CNAM", "CNAM", "Identifiant Social". NE PAS confondre avec le "numero_adherent" ni le "numero_contrat". Si le bulletin est de type ASSUREUR (CARTE, STAR, BH...) et qu'aucun champ CNAM n'est visible → "". Ne JAMAIS prendre une partie du numéro d'adhérent ou de contrat pour le mettre dans numero_cnam.
 - "employeur" : cherche le champ "Employeur" sur le bulletin. Si non visible → "".
 - "lettre_cle" et "cotation" : remplis sur TOUS les types d'actes (MEDECIN, RADIOLOGIE, LABORATOIRE, HOSPITALISATION, DENTAIRE, PARAMEDICAL) si la lettre-clé CNAM est visible sur le document (facture, reçu, bulletin, lettre confidentielle). Si non visible → "". Ne jamais inventer de cotation.
 - Pour HOSPITALISATION : type réservé EXCLUSIVEMENT aux séjours avec nuitée(s) confirmée(s). Preuves requises (au moins 1) : date_entree ≠ date_sortie, OU frais de séjour/chambre/lit sur la facture, OU section "Hospitalisation" du BS remplie avec dates. Une facture de clinique avec "Hospitalisation" en en-tête ou avec compte_autrui/consommables ne suffit PAS — vérifier les preuves de séjour réel. Si aucune preuve de séjour → utiliser le type de l'acte (MEDECIN, RADIOLOGIE, etc.) et rattacher la facture clinique comme pièce justificative. Quand confirmé HOSPITALISATION : "compte_autrui" est un tableau SÉPARÉ de "details_lignes". Les prestataires externes (médecins, anesthésiste, pharmacie, labo) vont dans "compte_autrui". Les prestations propres à la clinique (chambre, sage-femme, pharmacie interne) vont dans "details_lignes".
@@ -746,8 +749,9 @@ Retourne UNIQUEMENT ce JSON :
           "infos_adherent": {
             "assureur_detecte": "BH Assurance | CARTE Assurances | CNAM | STAR | GAT | autre (détecté via logo/en-tête)",
             "nom_prenom": "Nom de l'adhérent",
-            "numero_adherent": "N° de l'adhérent (N° contrat/police)",
-            "numero_cnam": "N° CNAM de l'adhérent (champ N° CNAM / Adhésion N° sur le bulletin)",
+            "numero_adherent": "N° de l'adhérent — c'est le numéro imprimé dans le champ 'N° Adhérent' du bulletin de l'ASSUREUR. Ce n'est PAS le numéro de contrat ni le numéro CNAM. Si un seul numéro est visible avec un slash (ex: 27433/1249), prendre le numéro COMPLET tel quel.",
+            "numero_contrat": "N° de contrat — c'est le numéro imprimé dans le champ 'Contrat N°' ou 'Police N°' du bulletin. C'est DIFFÉRENT du numero_adherent. Si non visible → ''.",
+            "numero_cnam": "N° CNAM de l'adhérent — c'est le numéro du régime CNAM, typiquement au format long (ex: 1688627809, 1/25498/84). Chercher dans le champ 'N° CNAM', 'CNAM', 'Identifiant Social', 'Adhésion N°' (sur BS CNAM uniquement). NE PAS confondre avec le numero_adherent ni le numero_contrat. Si non visible → ''.",
             "employeur": "Nom de l'employeur (champ Employeur sur le bulletin)",
             "numero_bulletin": "N° du bulletin (PRIORITÉ HAUTE — chercher manuscrit, tampon, champ N° BS)",
             "date_bulletin": "Date du bulletin (JJ/MM/AAAA)",
@@ -1041,7 +1045,9 @@ RÈGLES :
 - "cnam" : remplis ce bloc UNIQUEMENT si un document CNAM (décompte de remboursement) est présent dans les images. Si aucun document CNAM → ne mets pas la clé "cnam".
 - "pieces_justificatives" : remplis ce tableau UNIQUEMENT si des documents justificatifs (ordonnances, bilans, reçus, factures, comptes-rendus, lettres confidentielles) sont présents dans les images. Si aucun → tableau vide []. Dans "contenu", remplis UNIQUEMENT les sous-clés pertinentes au type de pièce : "medicaments_prescrits" pour ORDONNANCE, "resultats_bilan" pour BILAN, "lettre_confidentielle" pour LETTRE_CONFIDENTIELLE, "facture_details" pour FACTURE de clinique/hôpital (extraire TOUTES les lignes détaillées : désignation, quantité, prix unitaire, TVA, montants HT/TTC, ainsi que le compte d'autrui et le timbre fiscal), "texte_libre" pour COMPTE_RENDU/AUTRE. Supprime les sous-clés non pertinentes.
 - "assureur_detecte" : identifie l'assureur via le logo, l'en-tête, la mise en page. Si non identifiable → "".
-- "numero_cnam" : cherche le champ "N° CNAM" ou "Adhésion N°" sur le bulletin. Distinct du "numero_adherent". Si non visible → "".
+- "numero_adherent" : c'est le numéro d'adhérent, imprimé dans le champ "N° Adhérent". C'est DIFFÉRENT du numéro de contrat ("Contrat N°" / "Police N°") et du numéro CNAM.
+- "numero_contrat" : c'est le numéro de contrat/police, imprimé dans le champ "Contrat N°" ou "Police N°". C'est DIFFÉRENT du numero_adherent. Si non visible → "".
+- "numero_cnam" : c'est le numéro CNAM (régime obligatoire), format long (ex: 1688627809, 1/25498/84). Le chercher dans les champs "N° CNAM", "CNAM", "Identifiant Social". NE PAS confondre avec le "numero_adherent" ni le "numero_contrat". Si le bulletin est de type ASSUREUR (CARTE, STAR, BH...) et qu'aucun champ CNAM n'est visible → "". Ne JAMAIS prendre une partie du numéro d'adhérent ou de contrat pour le mettre dans numero_cnam.
 - "employeur" : cherche le champ "Employeur" sur le bulletin. Si non visible → "".
 - "lettre_cle" et "cotation" : remplis sur TOUS les types d'actes (MEDECIN, RADIOLOGIE, LABORATOIRE, HOSPITALISATION, DENTAIRE, PARAMEDICAL) si la lettre-clé CNAM est visible sur le document (facture, reçu, bulletin, lettre confidentielle). Si non visible → "". Ne jamais inventer de cotation.
 - Pour HOSPITALISATION : type réservé EXCLUSIVEMENT aux séjours avec nuitée(s) confirmée(s). Preuves requises (au moins 1) : date_entree ≠ date_sortie, OU frais de séjour/chambre/lit sur la facture, OU section "Hospitalisation" du BS remplie avec dates. Une facture de clinique avec "Hospitalisation" en en-tête ou avec compte_autrui/consommables ne suffit PAS — vérifier les preuves de séjour réel. Si aucune preuve de séjour → utiliser le type de l'acte (MEDECIN, RADIOLOGIE, etc.) et rattacher la facture clinique comme pièce justificative. Quand confirmé HOSPITALISATION : "compte_autrui" est un tableau SÉPARÉ de "details_lignes". Les prestataires externes (médecins, anesthésiste, pharmacie, labo) vont dans "compte_autrui". Les prestations propres à la clinique (chambre, sage-femme, pharmacie interne) vont dans "details_lignes".
@@ -1084,7 +1090,7 @@ async function fileToBase64(file) {
 
 // 🟢 gemini-1.5-pro est LE modèle optimisé de vision (à défaut, 1.5-flash est rapide)
 const GEMINI_MODELS = [
-  "gemini-3.1-pro-preview"
+  "gemini-3.1-pro-preview",
   // "gemini-3.1-flash-lite-preview",
 ];
 
