@@ -20,6 +20,7 @@ database_id = "652534cf-d092-493b-807a-43b5a2b2552a"
 # ============ STAGING ============
 [env.staging]
 name = "ocr-api-bh-assurance-staging"
+usage_model = "standard"
 
 [[env.staging.d1_databases]]
 binding = "DB"
@@ -29,6 +30,7 @@ database_id = "b88edbef-9af3-48da-a404-f543f798813b"
 # ============ PROD ============
 [env.prod]
 name = "ocr-api-bh-assurance"
+usage_model = "standard"
 
 [[env.prod.d1_databases]]
 binding = "DB"
