@@ -348,7 +348,7 @@ admin.get("/bulletins", async (c) => {
 
     const bulletins = await c.env.DB
       .prepare(
-        `SELECT id, statut_validation, erreurs_signalees, commentaires_correction, created_at
+        `SELECT id, statut_validation, erreurs_signalees, commentaires_correction, assureur, types_actes, est_exemple_fewshot, created_at
          FROM bulletins_valides${filter}
          ORDER BY created_at DESC LIMIT ? OFFSET ?`
       )
@@ -363,6 +363,222 @@ admin.get("/bulletins", async (c) => {
       pages: Math.ceil(countResult.total / per_page),
       bulletins: bulletins.results || [],
     });
+  } catch (err) {
+    return c.json({ success: false, erreur: err.message }, 500);
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /admin/bulletins/:id
+// Détail d'un bulletin avec donnees_ia et donnees_corrigees
+// ─────────────────────────────────────────────
+admin.get("/bulletins/:id", async (c) => {
+  try {
+    const id = parseInt(c.req.param("id"));
+    const bulletin = await c.env.DB
+      .prepare("SELECT * FROM bulletins_valides WHERE id = ?")
+      .bind(id)
+      .first();
+
+    if (!bulletin) {
+      return c.json({ success: false, erreur: "Bulletin introuvable." }, 404);
+    }
+
+    return c.json({ success: true, bulletin });
+  } catch (err) {
+    return c.json({ success: false, erreur: err.message }, 500);
+  }
+});
+
+// ─────────────────────────────────────────────
+// PUT /admin/bulletins/:id/corriger
+// Enregistre les données corrigées par l'humain
+// Body: { donnees_corrigees, erreurs_signalees?, commentaires_correction? }
+// ─────────────────────────────────────────────
+admin.put("/bulletins/:id/corriger", async (c) => {
+  try {
+    const id = parseInt(c.req.param("id"));
+    const body = await c.req.json();
+
+    const bulletin = await c.env.DB
+      .prepare("SELECT id, donnees_ia FROM bulletins_valides WHERE id = ?")
+      .bind(id)
+      .first();
+
+    if (!bulletin) {
+      return c.json({ success: false, erreur: "Bulletin introuvable." }, 404);
+    }
+
+    const donneesCorrigees = typeof body.donnees_corrigees === 'string'
+      ? body.donnees_corrigees
+      : JSON.stringify(body.donnees_corrigees);
+
+    // Extraire assureur et types_actes depuis les données corrigées
+    let assureur = '';
+    let typesActes = [];
+    try {
+      const parsed = JSON.parse(donneesCorrigees);
+      assureur = parsed.infos_adherent?.assureur || parsed.assureur || '';
+      if (parsed.actes_independants && Array.isArray(parsed.actes_independants)) {
+        typesActes = [...new Set(parsed.actes_independants.map(a => a.type).filter(Boolean))];
+      }
+    } catch { /* parsing optionnel */ }
+
+    await c.env.DB.prepare(
+      `UPDATE bulletins_valides
+       SET donnees_corrigees = ?, assureur = ?, types_actes = ?,
+           statut_validation = 'corrige',
+           erreurs_signalees = ?, commentaires_correction = ?,
+           updated_at = datetime('now')
+       WHERE id = ?`
+    ).bind(
+      donneesCorrigees,
+      assureur,
+      JSON.stringify(typesActes),
+      JSON.stringify(body.erreurs_signalees || []),
+      body.commentaires_correction || '',
+      id
+    ).run();
+
+    return c.json({ success: true, message: `Bulletin #${id} corrigé.`, assureur, types_actes: typesActes });
+  } catch (err) {
+    return c.json({ success: false, erreur: err.message }, 500);
+  }
+});
+
+// ─────────────────────────────────────────────
+// PUT /admin/bulletins/:id/valider
+// Valide tel quel (donnees_ia = référence)
+// ─────────────────────────────────────────────
+admin.put("/bulletins/:id/valider", async (c) => {
+  try {
+    const id = parseInt(c.req.param("id"));
+
+    const bulletin = await c.env.DB
+      .prepare("SELECT id, donnees_ia FROM bulletins_valides WHERE id = ?")
+      .bind(id)
+      .first();
+
+    if (!bulletin) {
+      return c.json({ success: false, erreur: "Bulletin introuvable." }, 404);
+    }
+
+    // Extraire assureur et types_actes depuis donnees_ia
+    let assureur = '';
+    let typesActes = [];
+    try {
+      const parsed = JSON.parse(bulletin.donnees_ia);
+      assureur = parsed.infos_adherent?.assureur || parsed.assureur || '';
+      if (parsed.actes_independants && Array.isArray(parsed.actes_independants)) {
+        typesActes = [...new Set(parsed.actes_independants.map(a => a.type).filter(Boolean))];
+      }
+    } catch { /* parsing optionnel */ }
+
+    await c.env.DB.prepare(
+      `UPDATE bulletins_valides
+       SET donnees_corrigees = donnees_ia, assureur = ?, types_actes = ?,
+           statut_validation = 'valide',
+           updated_at = datetime('now')
+       WHERE id = ?`
+    ).bind(assureur, JSON.stringify(typesActes), id).run();
+
+    return c.json({ success: true, message: `Bulletin #${id} validé tel quel.`, assureur, types_actes: typesActes });
+  } catch (err) {
+    return c.json({ success: false, erreur: err.message }, 500);
+  }
+});
+
+// ─────────────────────────────────────────────
+// PUT /admin/bulletins/:id/promouvoir
+// Toggle est_exemple_fewshot (uniquement si valide/corrigé)
+// ─────────────────────────────────────────────
+admin.put("/bulletins/:id/promouvoir", async (c) => {
+  try {
+    const id = parseInt(c.req.param("id"));
+
+    const bulletin = await c.env.DB
+      .prepare("SELECT id, statut_validation, est_exemple_fewshot FROM bulletins_valides WHERE id = ?")
+      .bind(id)
+      .first();
+
+    if (!bulletin) {
+      return c.json({ success: false, erreur: "Bulletin introuvable." }, 404);
+    }
+
+    if (!['valide', 'corrige'].includes(bulletin.statut_validation)) {
+      return c.json({
+        success: false,
+        erreur: `Seuls les bulletins validés/corrigés peuvent être promus. Statut actuel : ${bulletin.statut_validation}`
+      }, 422);
+    }
+
+    const newValue = bulletin.est_exemple_fewshot ? 0 : 1;
+    await c.env.DB.prepare(
+      `UPDATE bulletins_valides SET est_exemple_fewshot = ?, updated_at = datetime('now') WHERE id = ?`
+    ).bind(newValue, id).run();
+
+    return c.json({
+      success: true,
+      est_exemple_fewshot: newValue === 1,
+      message: newValue === 1
+        ? `Bulletin #${id} promu comme exemple few-shot.`
+        : `Bulletin #${id} retiré des exemples few-shot.`,
+    });
+  } catch (err) {
+    return c.json({ success: false, erreur: err.message }, 500);
+  }
+});
+
+// ─────────────────────────────────────────────
+// PUT /admin/bulletins/:id/rejeter
+// Rejeter un bulletin
+// ─────────────────────────────────────────────
+admin.put("/bulletins/:id/rejeter", async (c) => {
+  try {
+    const id = parseInt(c.req.param("id"));
+    const body = await c.req.json();
+
+    const bulletin = await c.env.DB
+      .prepare("SELECT id FROM bulletins_valides WHERE id = ?")
+      .bind(id)
+      .first();
+
+    if (!bulletin) {
+      return c.json({ success: false, erreur: "Bulletin introuvable." }, 404);
+    }
+
+    await c.env.DB.prepare(
+      `UPDATE bulletins_valides
+       SET statut_validation = 'rejete', est_exemple_fewshot = 0,
+           erreurs_signalees = ?, commentaires_correction = ?,
+           updated_at = datetime('now')
+       WHERE id = ?`
+    ).bind(
+      JSON.stringify(body.erreurs_signalees || ['rejete']),
+      body.commentaires_correction || 'Rejeté',
+      id
+    ).run();
+
+    return c.json({ success: true, message: `Bulletin #${id} rejeté.` });
+  } catch (err) {
+    return c.json({ success: false, erreur: err.message }, 500);
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /admin/exemples-fewshot
+// Liste les exemples promus
+// ─────────────────────────────────────────────
+admin.get("/exemples-fewshot", async (c) => {
+  try {
+    const rows = await c.env.DB.prepare(
+      `SELECT id, assureur, types_actes, statut_validation, created_at, updated_at
+       FROM bulletins_valides
+       WHERE est_exemple_fewshot = 1
+       ORDER BY updated_at DESC`
+    ).all();
+
+    return c.json({ success: true, total: rows.results?.length || 0, exemples: rows.results || [] });
   } catch (err) {
     return c.json({ success: false, erreur: err.message }, 500);
   }
@@ -808,6 +1024,9 @@ function buildDashboardHTML() {
       <div class="nav-item" data-section="bulletins" onclick="showSection('bulletins', this)">
         <span class="nav-icon">📄</span> Bulletins validés
       </div>
+      <div class="nav-item" data-section="fewshot" onclick="showSection('fewshot', this)">
+        <span class="nav-icon">🎯</span> Exemples few-shot
+      </div>
     </div>
     <div class="nav-section">
       <div class="nav-label">Configuration</div>
@@ -928,12 +1147,14 @@ function buildDashboardHTML() {
               <th>ID</th>
               <th>Date</th>
               <th>Statut</th>
-              <th>Erreurs</th>
-              <th>Commentaires</th>
+              <th>Assureur</th>
+              <th>Types</th>
+              <th>Few-shot</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="bulletins-tbody">
-            <tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--muted)">Chargement…</td></tr>
+            <tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted)">Chargement…</td></tr>
           </tbody>
         </table>
       </div>
@@ -955,7 +1176,91 @@ function buildDashboardHTML() {
       </div>
     </section>
 
+    <!-- ── Section: Few-shot ── -->
+    <section id="section-fewshot" class="tab-panel">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Exemples few-shot actifs</div>
+          <div class="page-subtitle">Ces exemples sont injectés dans Gemini pour améliorer l'OCR</div>
+        </div>
+      </div>
+      <div class="config-card" style="padding:0;overflow:hidden">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Assureur</th>
+              <th>Types d'actes</th>
+              <th>Statut</th>
+              <th>Promu le</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="fewshot-tbody">
+            <tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--muted)">Chargement…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
   </main>
+
+  <!-- ── Correction Modal ── -->
+  <div class="modal-overlay" id="correction-modal">
+    <div class="modal" style="max-width:95vw;width:1200px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <div class="modal-title" id="correction-modal-title">Corriger le bulletin #—</div>
+        <button class="modal-close" onclick="closeCorrectionModal()">✕</button>
+      </div>
+      <div style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:1rem;overflow:hidden;min-height:0">
+        <div style="display:flex;flex-direction:column;gap:0.5rem;overflow:hidden">
+          <label>Résultat IA (lecture seule)</label>
+          <textarea id="correction-ia" readonly style="flex:1;font-size:0.75rem;min-height:300px;resize:none;background:rgba(0,229,255,0.03)"></textarea>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.5rem;overflow:hidden">
+          <label>Données corrigées (éditable)</label>
+          <textarea id="correction-edit" style="flex:1;font-size:0.75rem;min-height:300px;resize:none"></textarea>
+        </div>
+      </div>
+      <div style="margin-top:1rem">
+        <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr">
+          <div class="form-group">
+            <label>Erreurs détectées</label>
+            <div style="display:flex;flex-wrap:wrap;gap:0.5rem;padding-top:0.25rem">
+              <label style="font-size:0.75rem;display:flex;align-items:center;gap:0.3rem;text-transform:none;letter-spacing:0">
+                <input type="checkbox" class="err-check" value="montant_incorrect"> Montant
+              </label>
+              <label style="font-size:0.75rem;display:flex;align-items:center;gap:0.3rem;text-transform:none;letter-spacing:0">
+                <input type="checkbox" class="err-check" value="acte_manquant"> Acte manquant
+              </label>
+              <label style="font-size:0.75rem;display:flex;align-items:center;gap:0.3rem;text-transform:none;letter-spacing:0">
+                <input type="checkbox" class="err-check" value="assureur_incorrect"> Assureur
+              </label>
+              <label style="font-size:0.75rem;display:flex;align-items:center;gap:0.3rem;text-transform:none;letter-spacing:0">
+                <input type="checkbox" class="err-check" value="numero_incorrect"> Numéro
+              </label>
+              <label style="font-size:0.75rem;display:flex;align-items:center;gap:0.3rem;text-transform:none;letter-spacing:0">
+                <input type="checkbox" class="err-check" value="type_acte_incorrect"> Type acte
+              </label>
+              <label style="font-size:0.75rem;display:flex;align-items:center;gap:0.3rem;text-transform:none;letter-spacing:0">
+                <input type="checkbox" class="err-check" value="autre"> Autre
+              </label>
+            </div>
+          </div>
+          <div class="form-group" style="grid-column:span 2">
+            <label for="correction-comment">Commentaire</label>
+            <input type="text" id="correction-comment" placeholder="Détail de la correction…" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeCorrectionModal()">Annuler</button>
+        <button class="btn btn-danger" onclick="rejectBulletin()" style="font-size:0.8rem">Rejeter</button>
+        <button class="btn btn-success-sm" onclick="validateBulletin()" style="font-size:0.875rem;padding:0.5rem 1rem">Valider tel quel</button>
+        <button class="btn btn-primary" onclick="saveCorrectionBulletin()">Enregistrer correction</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ── Toast ── -->
   <div class="toast-wrap" id="toast-wrap"></div>
@@ -1024,6 +1329,7 @@ function buildDashboardHTML() {
       if (name === 'logs')      loadLogs();
       if (name === 'bulletins') loadBulletins();
       if (name === 'providers') loadProviders();
+      if (name === 'fewshot')   loadFewshot();
     }
 
     // ══════════════════════════════════════════════
@@ -1218,21 +1524,173 @@ function buildDashboardHTML() {
         const data = await apiFetch('/bulletins' + qs);
         const tbody = document.getElementById('bulletins-tbody');
         if (!data.bulletins.length) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--muted)">Aucun bulletin</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted)">Aucun bulletin</td></tr>';
         } else {
           tbody.innerHTML = data.bulletins.map(b => {
-            let erreurs = [];
-            try { erreurs = JSON.parse(b.erreurs_signalees || '[]'); } catch {}
+            let types = [];
+            try { types = JSON.parse(b.types_actes || '[]'); } catch {}
+            const fewshotTag = b.est_exemple_fewshot
+              ? '<span class="tag tag-info">FEW-SHOT</span>'
+              : '';
             return \`<tr>
               <td style="font-family:var(--font-mono);color:var(--muted)">#\${b.id}</td>
               <td style="font-size:0.75rem;color:var(--muted)">\${fmtDate(b.created_at)}</td>
               <td>\${tagHtml(b.statut_validation)}</td>
-              <td style="font-size:0.8rem">\${erreurs.length ? erreurs.join(', ') : '—'}</td>
-              <td style="font-size:0.8rem;color:var(--muted)">\${b.commentaires_correction || '—'}</td>
+              <td style="font-size:0.8rem">\${b.assureur || '—'}</td>
+              <td style="font-size:0.7rem;font-family:var(--font-mono)">\${types.join(', ') || '—'}</td>
+              <td>\${fewshotTag}</td>
+              <td>
+                <button class="btn btn-ghost" style="font-size:0.7rem;padding:0.2rem 0.5rem" onclick="openCorrectionModal(\${b.id})">Voir / Corriger</button>
+                \${['valide','corrige'].includes(b.statut_validation) ?
+                  \`<button class="btn btn-success-sm" style="font-size:0.65rem" onclick="toggleFewshot(\${b.id})">\${b.est_exemple_fewshot ? 'Démouvoir' : 'Promouvoir'}</button>\`
+                  : ''}
+              </td>
             </tr>\`;
           }).join('');
         }
         renderPagination('bulletins-pagination', data.page, data.pages, p => loadBulletins(p));
+      } catch(e) { toast(e.message, 'error'); }
+    }
+
+    // ══════════════════════════════════════════════
+    // Correction Modal
+    // ══════════════════════════════════════════════
+    let currentBulletinId = null;
+
+    async function openCorrectionModal(id) {
+      currentBulletinId = id;
+      document.getElementById('correction-modal-title').textContent = 'Corriger le bulletin #' + id;
+      document.querySelectorAll('.err-check').forEach(c => c.checked = false);
+      document.getElementById('correction-comment').value = '';
+
+      try {
+        const data = await apiFetch('/bulletins/' + id);
+        const b = data.bulletin;
+        const iaJson = b.donnees_ia || '{}';
+        const corrJson = b.donnees_corrigees || iaJson;
+
+        try {
+          document.getElementById('correction-ia').value = JSON.stringify(JSON.parse(iaJson), null, 2);
+        } catch {
+          document.getElementById('correction-ia').value = iaJson;
+        }
+        try {
+          document.getElementById('correction-edit').value = JSON.stringify(JSON.parse(corrJson), null, 2);
+        } catch {
+          document.getElementById('correction-edit').value = corrJson;
+        }
+
+        // Pré-cocher les erreurs existantes
+        if (b.erreurs_signalees) {
+          try {
+            const errs = JSON.parse(b.erreurs_signalees);
+            errs.forEach(e => {
+              const cb = document.querySelector(\`.err-check[value="\${e}"]\`);
+              if (cb) cb.checked = true;
+            });
+          } catch {}
+        }
+        document.getElementById('correction-comment').value = b.commentaires_correction || '';
+
+        document.getElementById('correction-modal').classList.add('open');
+      } catch(e) { toast(e.message, 'error'); }
+    }
+
+    function closeCorrectionModal() {
+      document.getElementById('correction-modal').classList.remove('open');
+      currentBulletinId = null;
+    }
+
+    async function saveCorrectionBulletin() {
+      if (!currentBulletinId) return;
+      const editText = document.getElementById('correction-edit').value;
+
+      // Valider que c'est du JSON valide
+      try { JSON.parse(editText); } catch {
+        toast('Le JSON corrigé est invalide. Vérifiez la syntaxe.', 'error');
+        return;
+      }
+
+      const erreurs = [...document.querySelectorAll('.err-check:checked')].map(c => c.value);
+      const comment = document.getElementById('correction-comment').value;
+
+      try {
+        await apiFetch('/bulletins/' + currentBulletinId + '/corriger', {
+          method: 'PUT',
+          body: JSON.stringify({
+            donnees_corrigees: editText,
+            erreurs_signalees: erreurs,
+            commentaires_correction: comment,
+          }),
+        });
+        toast('Correction enregistrée.', 'success');
+        closeCorrectionModal();
+        loadBulletins(bulletinsPage);
+      } catch(e) { toast(e.message, 'error'); }
+    }
+
+    async function validateBulletin() {
+      if (!currentBulletinId) return;
+      try {
+        await apiFetch('/bulletins/' + currentBulletinId + '/valider', { method: 'PUT' });
+        toast('Bulletin validé tel quel.', 'success');
+        closeCorrectionModal();
+        loadBulletins(bulletinsPage);
+      } catch(e) { toast(e.message, 'error'); }
+    }
+
+    async function rejectBulletin() {
+      if (!currentBulletinId) return;
+      const erreurs = [...document.querySelectorAll('.err-check:checked')].map(c => c.value);
+      const comment = document.getElementById('correction-comment').value;
+
+      try {
+        await apiFetch('/bulletins/' + currentBulletinId + '/rejeter', { method: 'PUT',
+          body: JSON.stringify({
+            erreurs_signalees: erreurs.length ? erreurs : ['rejete'],
+            commentaires_correction: comment || 'Rejeté',
+          }),
+        });
+        toast('Bulletin rejeté.', 'warning');
+        closeCorrectionModal();
+        loadBulletins(bulletinsPage);
+      } catch(e) { toast(e.message, 'error'); }
+    }
+
+    async function toggleFewshot(id) {
+      try {
+        const data = await apiFetch('/bulletins/' + id + '/promouvoir', { method: 'PUT' });
+        toast(data.message, 'success');
+        loadBulletins(bulletinsPage);
+      } catch(e) { toast(e.message, 'error'); }
+    }
+
+    // ══════════════════════════════════════════════
+    // Few-shot examples list
+    // ══════════════════════════════════════════════
+    async function loadFewshot() {
+      try {
+        const data = await apiFetch('/exemples-fewshot');
+        const tbody = document.getElementById('fewshot-tbody');
+        if (!data.exemples || !data.exemples.length) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--muted)">Aucun exemple promu</td></tr>';
+        } else {
+          tbody.innerHTML = data.exemples.map(ex => {
+            let types = [];
+            try { types = JSON.parse(ex.types_actes || '[]'); } catch {}
+            return \`<tr>
+              <td style="font-family:var(--font-mono);color:var(--muted)">#\${ex.id}</td>
+              <td>\${ex.assureur || '—'}</td>
+              <td style="font-size:0.7rem;font-family:var(--font-mono)">\${types.join(', ') || '—'}</td>
+              <td>\${tagHtml(ex.statut_validation)}</td>
+              <td style="font-size:0.75rem;color:var(--muted)">\${fmtDate(ex.updated_at)}</td>
+              <td>
+                <button class="btn btn-ghost" style="font-size:0.7rem;padding:0.2rem 0.5rem" onclick="openCorrectionModal(\${ex.id})">Voir</button>
+                <button class="btn btn-danger" style="font-size:0.65rem;padding:0.2rem 0.5rem" onclick="toggleFewshot(\${ex.id})">Démouvoir</button>
+              </td>
+            </tr>\`;
+          }).join('');
+        }
       } catch(e) { toast(e.message, 'error'); }
     }
 
@@ -1371,5 +1829,72 @@ function buildDashboardHTML() {
 </body>
 </html>`;
 }
+
+// ─────────────────────────────────────────────
+// POST /admin/seed-nomenclature
+// Injecter/mettre à jour la nomenclature CNAM
+// Body JSON : { familles: [{ famille, lettre_cle, actes: [{ code_acte, designation, cotation, forfait_conventionnel }] }] }
+// ─────────────────────────────────────────────
+admin.post("/seed-nomenclature", async (c) => {
+  try {
+    const body = await c.req.json();
+    const familles = body.familles || [];
+    let inserted = 0;
+    let updated = 0;
+
+    for (const fam of familles) {
+      const famille = fam.famille || fam.libelle || "";
+      const lettreCle = fam.lettre_cle || "";
+
+      for (const acte of fam.actes || []) {
+        const code = acte.code_acte || null;
+        if (!code) continue;
+
+        const existing = await c.env.DB.prepare(
+          "SELECT id FROM nomenclature_cnam WHERE code = ?"
+        ).bind(code).first();
+
+        if (existing) {
+          await c.env.DB.prepare(
+            `UPDATE nomenclature_cnam SET famille = ?, designation = ?, lettre_cle = ?, cotation = ?, forfait_conventionnel = ?, deleted_at = NULL WHERE code = ?`
+          ).bind(famille, acte.designation, lettreCle, acte.cotation || null, acte.forfait_conventionnel || null, code).run();
+          updated++;
+        } else {
+          await c.env.DB.prepare(
+            `INSERT INTO nomenclature_cnam (code, famille, designation, lettre_cle, cotation, forfait_conventionnel) VALUES (?, ?, ?, ?, ?, ?)`
+          ).bind(code, famille, acte.designation, lettreCle, acte.cotation || null, acte.forfait_conventionnel || null).run();
+          inserted++;
+        }
+      }
+    }
+
+    return c.json({ success: true, inserted, updated, total: inserted + updated });
+  } catch (err) {
+    return c.json({ success: false, erreur: err.message }, 500);
+  }
+});
+
+// ─────────────────────────────────────────────
+// GET /admin/nomenclature
+// Lister la nomenclature CNAM active
+// ─────────────────────────────────────────────
+admin.get("/nomenclature", async (c) => {
+  try {
+    const famille = c.req.query("famille") || null;
+    let query = "SELECT * FROM nomenclature_cnam WHERE deleted_at IS NULL";
+    const binds = [];
+    if (famille) {
+      query += " AND famille = ?";
+      binds.push(famille);
+    }
+    query += " ORDER BY code ASC";
+
+    const stmt = c.env.DB.prepare(query);
+    const result = binds.length > 0 ? await stmt.bind(...binds).all() : await stmt.all();
+    return c.json({ success: true, total: result.results.length, nomenclature: result.results });
+  } catch (err) {
+    return c.json({ success: false, erreur: err.message }, 500);
+  }
+});
 
 export default admin;
