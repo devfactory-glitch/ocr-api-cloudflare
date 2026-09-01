@@ -14,14 +14,15 @@ export async function logUsageEvent(db, event) {
     nb_fichiers = 1,
     duree_ms = null,
     error_message = null,
+    fewshot_count = 0,
   } = event;
 
   await db
     .prepare(
-      `INSERT INTO usage_logs (endpoint, provider, status, nb_fichiers, duree_ms, error_message, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
+      `INSERT INTO usage_logs (endpoint, provider, status, nb_fichiers, duree_ms, error_message, fewshot_count, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
     )
-    .bind(endpoint, provider, status, nb_fichiers, duree_ms, error_message)
+    .bind(endpoint, provider, status, nb_fichiers, duree_ms, error_message, fewshot_count)
     .run();
 }
 
@@ -125,6 +126,29 @@ export async function getGlobalStats(db, options = {}) {
     // Table peut ne pas exister encore
   }
 
+  // Précision OCR et exemples few-shot
+  let precision = { total: 0, valide_sans_correction: 0, taux_precision: 0, exemples_fewshot: 0 };
+  try {
+    const precisionRow = await db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN statut_validation = 'valide' THEN 1 ELSE 0 END) as valide_sans_correction,
+        SUM(CASE WHEN est_exemple_fewshot = 1 THEN 1 ELSE 0 END) as exemples_fewshot
+      FROM bulletins_valides
+      WHERE statut_validation IN ('valide', 'corrige', 'rejete')
+    `).first();
+    if (precisionRow) {
+      precision = {
+        ...precisionRow,
+        taux_precision: precisionRow.total > 0
+          ? Math.round((precisionRow.valide_sans_correction / precisionRow.total) * 100)
+          : 0,
+      };
+    }
+  } catch {
+    // colonnes pas encore présentes
+  }
+
   const taux_succes =
     global.total_requetes > 0
       ? Math.round((global.total_succes / global.total_requetes) * 100)
@@ -140,6 +164,7 @@ export async function getGlobalStats(db, options = {}) {
     par_provider: byProvider.results || [],
     evolution_30j: evolution.results || [],
     validation: validationStats.results || [],
+    precision,
   };
 }
 
