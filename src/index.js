@@ -8,6 +8,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import admin from "./admin.js"; // À supposer existant dans votre dossier
 import { logUsageEvent } from "./stats.js"; // À supposer existant dans votre dossier
 import { PROMPT, PROMPT_DOSSIER } from "./prompt.js";
+import { postProcess } from "./postprocess.js";
 
 const app = new Hono();
 app.use("/*", cors());
@@ -473,7 +474,7 @@ async function generateWithFallback(env, systemPrompt, imageParts, fewShotExampl
 app.get("/", (c) => {
   return c.json({
     message: "API OCR BH Assurance (Intelligente)",
-    version: "3.0.0", // version upgradée grâce aux auto-corrections !
+    version: "4.1.0", // version upgradée grâce aux auto-corrections !
     endpoints: [
       "POST /analyse-bulletin (MULTI-DOC, Structure complète IA avec correction automatique)",
       "POST /ocr (SIMPLIFIÉ pour 1 seul fichier manuel)",
@@ -493,7 +494,7 @@ app.get("/openapi.json", (c) => {
       title: "API OCR BH Assurance (Intelligente)",
       description:
         "API d'extraction OCR de dossiers médicaux avec auto-correction croisée et séparation médecins/radiologie via Gemini AI 1.5.",
-      version: "3.0.0",
+      version: "4.1.0",
     },
     paths: {
       "/": {
@@ -681,6 +682,7 @@ async function analyseSingleDossier(env, files, fewShotExamples) {
     data = enrichActesFromContext(data);
     // Post-traitement 2 : enrichir avec nomenclature CNAM (DB)
     if (env.DB) data = await enrichWithNomenclature(env.DB, data);
+    data = postProcess(data);
   }
 
   return { data, parseOk, text, modelUsed: result.modelUsed };

@@ -14,6 +14,22 @@
 //   [P8] Nouveaux champs d'acte : role_intervention, patient_concerne, non_percu,
 //        montant_ht, montant_pec, montant_patient, forfait
 //   [P9] Couche d'analyse : contrôles croisés, anomalies, niveau de confiance
+//
+// CHANGELOG v4.0 -> v4.1 (aucune règle v4.0 supprimée) :
+//   [P10] Règle 1b : l'identité IMPRIMÉE écrase le manuscrit du BS
+//   [P11] MF lue sur document pivoté à 180° -> reconstitution du format
+//   [P12] Propagation code_acte / lettre_cle / cotation de la ligne
+//         "Acte : <CODE> (KC nn)" vers l'acte du CHIRURGIEN
+//   [P13] Bloc 3k : chaînage intervention_id + rubrique_proposee (K/FAN/SO/JHC/PH)
+//   [P14] Bloc 3l : restitution vs liquidation — l'IA ne fusionne jamais
+//   [P15] Bloc 3m : nature des lignes de pharmacie interne (4 catégories + sous-totaux)
+//   [P16] Règle 5d : le total d'un ticket vient du ticket, jamais d'ailleurs
+//   [P17] Règle 7b : VERROU relevé assureur — aucun montant d'acte ne peut en venir
+//   [P18] Règle 20 : cascade des payeurs et reste à charge (R1..R4)
+//   [P19] total_hospitalisation EXCLUT le compte d'autrui (anti double comptage)
+//   [P20] total_clinique_facture = ligne de la grille, PAS le récapitulatif
+//   [P21] Champ exclusif_avec : empêche le double comptage en vue groupée
+//   [P22] Contrôles C12..C16
 
 export const PROMPT_BASE = `
 🔍 LECTURE PRÉALABLE :
@@ -67,15 +83,73 @@ H. PLUSIEURS BULLETINS DANS LE MÊME LOT (RÈGLE CRITIQUE) :
 - Code 3 lettres + 6 chiffres (MGE000070, RAD010260, MJC030040) = CODE D'INTERVENTION CNAM → accord_prealable_details.code_intervention ET code_acte de l'acte concerné.
   Ce code n'est PAS une lettre-clé. NE JAMAIS mettre "RAD" dans lettre_cle ni "010260" dans cotation.
   Un code comme RAD010260 → code_intervention: "RAD010260", lettre_cle: "Z" ou "Rd" (selon nomenclature radiologie).
-- FORMAT "Acte : <CODE> (<LETTRE> <NB>)" sur une facture clinique (ex: "Acte : MJC030040 (KC 100)") :
+- FORMAT "Acte : <CODE> (<LETTRE> <NB>)" sur une facture clinique
+  (ex: "Acte : MJC030040 (KC 100)") — RÈGLE IMPÉRATIVE, DEUX EFFETS DISTINCTS :
   → code_acte = "MJC030040", lettre_cle = "KC", cotation = "100".
   → La colonne "Qté" de cette ligne vaut souvent la COTATION (100), et "Px. Unit." la VALEUR DE LA LETTRE-CLÉ (5,900).
     Ne PAS confondre cette quantité avec un nombre d'unités consommées.
+
+  EFFET 1 — LE MONTANT reste à la CLINIQUE.
+    Cette ligne est la part ÉTABLISSEMENT de l'acte (salle d'opération, plateau
+    technique, facturé au tarif conventionné = cotation × valeur de la lettre-clé).
+    Elle RESTE dans "bloc_operatoire" avec son montant et compte dans
+    total_clinique_calcule. Elle n'est JAMAIS promue en acte indépendant.
+    Sa rubrique_proposee est "SO" (salle opération), PAS "K".
+
+  EFFET 2 — L'IDENTIFICATION va au CHIRURGIEN.
+    Le code, la lettre-clé et la cotation identifient L'ACTE MÉDICAL réalisé.
+    Ils DOIVENT être RECOPIÉS sur l'acte promu portant
+    role_intervention = "Chirurgien" :
+        code_acte  = le code CNAM   (ex: "MJC030040")
+        lettre_cle = la lettre-clé  (ex: "KC")
+        cotation   = le nombre      (ex: "100")
+    C'est une COPIE, pas un déplacement : la ligne clinique conserve ces valeurs.
+    Le MONTANT du chirurgien reste le sien (compte d'autrui + note d'honoraires),
+    il n'est JAMAIS remplacé par le montant de la ligne clinique.
+
+  ⚠️ DÉFAUT BLOQUANT : un acte "Chirurgien" avec lettre_cle remplie mais
+  code_acte et cotation VIDES, alors que la facture, la lettre confidentielle
+  ou la décision de prise en charge portent un code d'intervention.
+  Sans cotation, l'assureur ne peut PAS appliquer son barème.
+
+  SOURCES DU CODE D'INTERVENTION, par ordre de priorité :
+    1) LETTRE CONFIDENTIELLE (codification CNAM)
+    2) ligne "Acte : <CODE> (<LETTRE> nn)" de la facture clinique
+    3) accord_prealable_details.code_intervention (décision de prise en charge)
+    4) section "Actes Médicaux" du BS
+  Dès qu'UNE de ces sources existe et qu'un chirurgien est promu sans cotation,
+  la propagation est OBLIGATOIRE.
 - MATRICULE FISCALE : format standard = 7 chiffres + "/" + lettre + "/A/" + lettre + "/000" (ex: 1756903/P/A/C/000).
   Lire de gauche à droite. Ne JAMAIS inverser l'ordre des caractères.
+- MF SUR DOCUMENT PIVOTÉ OU NON SEGMENTÉ (RÈGLE CRITIQUE) :
+  Les tickets de pharmacie et certaines factures sont scannés à 180°. Une MF lue
+  comme "000CP1529445S" ou "968897ECP000" est une lecture INVERSÉE ou collée d'un
+  format standard. INDICE DE PIVOT : le groupe "000" apparaît en TÊTE de chaîne.
+  MÉTHODE DE RECONSTITUTION :
+    a) repérer le bloc de 6 à 7 CHIFFRES → c'est le numéro
+    b) repérer les LETTRES isolées → ce sont les clés
+    c) le suffixe est TOUJOURS "/000"
+    d) réassembler : <chiffres>/<lettre>/<lettre>/<lettre>/000
+  Ex: "000CP1529445S" → "1529445/S/C/P/000" | "968897ECP000" → "968897/E/C/P/000"
+  Si la reconstitution est incertaine → renvoyer la chaîne BRUTE telle que lue et
+  consigner "MF non segmentée, document probablement pivoté".
 
 🔴 RÈGLES :
 1. Textes imprimés ÉCRASENT le manuscrit brouillon.
+1b. IDENTITÉ DE L'ADHÉRENT — SOURCE PRIORITAIRE (RÈGLE CRITIQUE) :
+   Le nom, le prénom et les numéros sont repris de la source IMPRIMÉE la plus fiable,
+   dans cet ordre STRICT :
+     1) RELEVÉ D'ASSUREUR (nom en majuscules d'imprimerie)
+     2) DÉCISION DE PRISE EN CHARGE CNAM
+     3) FACTURE CLINIQUE / DÉTAIL DE FACTURE
+     4) ORDONNANCE IMPRIMÉE
+     5) BS manuscrit (dernier recours uniquement)
+   Le manuscrit du BS ne sert QUE si aucune source imprimée ne porte l'information.
+   Si l'orthographe diffère entre manuscrit et imprimé → retenir l'IMPRIMÉ et
+   consigner dans controles.anomalies : "orthographe BS 'X' corrigée en 'Y' (source imprimée)".
+   Exemple : BS manuscrit "Emma" + facture/relevé/décision "EMNA" → retenir "Emna".
+   IDEM pour numero_cnam, numero_adherent, numero_contrat, employeur : si le BS
+   manuscrit et une source imprimée divergent, l'IMPRIMÉ gagne toujours.
 2. Nom/MF praticiens → Cachets/Tampons à l'encre.
 3. Ne PAS mélanger MEDECIN (C, V) et RADIOLOGIE (Écho, Scanner, IRM).
 3a. CONSULTATION ≠ ACTE TECHNIQUE — DISTINCTION PAR LA SECTION DU BS :
@@ -369,6 +443,98 @@ UNIQUEMENT s'il n'existe NI décompte CNAM NI forfait chiffré sur la décision
 de prise en charge. Dans ce cas, préciser dans observations : "montant_cnam
 issu de la colonne P.E.C de la facture (pas de décompte disponible)".
 
+3k. CHAÎNAGE D'INTERVENTION — RATTACHER SANS JAMAIS FUSIONNER (RÈGLE CRITIQUE) :
+Tous les postes d'une même intervention (chirurgien, anesthésiste, aide, instrumentiste,
+bloc/salle d'opération, séjour, pharmacie interne, oxygène) partagent le MÊME
+"intervention_id" (ex: "INT-1") et référencent le même "code_acte".
+Cela permet au gestionnaire de voir d'un coup d'œil tout ce qui relève de l'acte.
+
+🚫 INTERDIT ABSOLU : additionner ces postes en un seul montant "KC".
+Chaque poste garde SON montant, SA lettre-clé et SA rubrique, parce que l'assureur
+applique un PLAFOND et un TAUX DIFFÉRENTS par rubrique. Fusionner détruit
+l'application du barème et fait perdre les plafonds atteints.
+
+CHAMPS OBLIGATOIRES sur chaque acte promu ET sur chaque ligne des sections
+d'hospitalisation liées à une intervention :
+  "intervention_id"   : identifiant du chaînage (INT-1, INT-2...)
+  "rubrique_proposee" : classification par NATURE ÉCONOMIQUE du poste :
+      "K"    = honoraires chirurgicaux (chirurgien, aide opératoire, instrumentiste)
+      "FAN"  = frais d'anesthésie (honoraires de l'anesthésiste)
+      "SO"   = salle d'opération + anesthésie (ligne "Acte : <CODE>", bloc,
+               salle de réveil, oxygène, appareillages)
+      "JHC"  = hospitalisation et clinique (chambre, lit, séjour, accompagnant,
+               frais de dossier)
+      "PH"   = pharmacie (interne et de ville)
+      "CS"   = consultations et visites (y compris visite au nouveau-né)
+      "AUTRE"= tout poste non classable
+  ⚠️ Ces libellés de rubriques sont ceux couramment employés par les assureurs
+  tunisiens. Si un relevé d'assureur présent dans le dossier utilise d'AUTRES
+  codes, recopier SES codes dans "rubrique_assureur" en plus de rubrique_proposee.
+  "rubrique_proposee" est une PROPOSITION fondée sur la nature du poste. Le barème
+  définitif dépend du contrat et sera appliqué EN AVAL. Ne jamais calculer de taux.
+
+INDICATEUR DE COÛT (informatif seulement) :
+  "cout_total_intervention" : somme de tous les postes portant le même
+  intervention_id. C'est un INDICATEUR d'affichage, JAMAIS une base de
+  remboursement, JAMAIS un montant à substituer aux montants individuels.
+
+3l. RESTITUTION vs LIQUIDATION — SÉPARATION STRICTE (RÈGLE CRITIQUE) :
+L'extraction RESTITUE une vue complète et détaillée. Elle ne DÉCIDE jamais d'un
+mode de calcul, ne fusionne rien, ne supprime rien.
+  → Chaque poste conserve son montant, sa lettre-clé, sa rubrique et son
+    intervention_id : c'est la vue DÉTAILLÉE.
+  → Le chaînage par intervention_id permet au gestionnaire de basculer en vue
+    GROUPÉE sans qu'aucun montant ne soit fusionné ni recalculé dans le JSON.
+  → Le choix entre "liquider au forfait global" et "liquider poste par poste
+    selon les plafonds du contrat" appartient AU GESTIONNAIRE, en aval.
+
+GARANTIE D'ADDITIVITÉ (impérative) :
+Une addition naïve de tous les postes doit donner un total JUSTE. Aucun montant
+ne doit apparaître deux fois sous deux angles différents.
+Quand deux représentations d'une même dépense coexistent (total de facture vs ses
+lignes, ligne groupée "Pharmacie Interne" vs son détail annexe, note d'honoraires
+vs ligne de compte d'autrui du même praticien), remplir :
+  "exclusif_avec" : liste des libellés ou identifiants des postes avec lesquels
+                    ce montant NE DOIT PAS être additionné, car ils représentent
+                    la même dépense sous un autre angle.
+Le front s'en sert pour empêcher tout double comptage lors d'un regroupement.
+
+VUE PAR DÉFAUT : si "forfait" vaut true (accouchement voie basse, acte au forfait
+conventionnel), la vue GROUPÉE est la lecture pertinente. Sinon (césarienne,
+chirurgie cotée), c'est la vue DÉTAILLÉE. Renseigner "vue_recommandee":
+"groupee" | "detaillee" au niveau de l'hospitalisation.
+
+3m. PHARMACIE INTERNE — CLASSER SANS DÉCIDER DE LA REMBOURSABILITÉ :
+Chaque ligne de pharmacie_interne (et de pharmacie de ville) reçoit un champ "nature" :
+  "MEDICAMENT"         : spécialité pharmaceutique avec DCI identifiable —
+                         antibiotique, antalgique, anesthésique, soluté de perfusion,
+                         utérotonique, corticoïde, vitamine, vaccin, antiseptique
+  "DISPOSITIF_MEDICAL" : sonde, cathéter, suture/fil, aiguille, seringue, perfuseur,
+                         électrode, plaque, tubulure, drain
+  "CONSOMMABLE_UU"     : gant, casaque, alèse, compresse, champ, housse, masque,
+                         lancette, bandelette, trousse, kit, sparadrap
+  "HOTELIER"           : bracelet, rasoir, thermomètre, brosse, kit patient, blouse
+
+INDICE FORT MAIS NON DÉCISIF : en Tunisie les médicaments sont à TVA 0%.
+  → TVA 7% ou 19% ⇒ ce n'est JAMAIS un médicament.
+  → TVA 0% ⇒ CANDIDAT médicament, à confirmer par la désignation (sondes,
+    cathéters et sutures sont aussi à 0%).
+
+SOUS-TOTAUX OBLIGATOIRES dans pharmacie_interne :
+  "total_medicaments", "total_dispositifs", "total_consommables", "total_hotelier"
+Leur somme doit être EXACTEMENT égale à pharmacie_interne.total.
+
+🚫 EXTRACTION EXHAUSTIVE OBLIGATOIRE : ne JAMAIS omettre une ligne au motif
+qu'elle semble non remboursable. Le caractère remboursable dépend du CONTRAT et
+change d'un assureur, d'une année et d'un adhérent à l'autre. Une ligne non
+extraite est une ligne que le gestionnaire ne pourra ni vérifier ni contester.
+Le nombre de lignes extraites doit égaler le nombre de lignes imprimées (contrôle C5).
+"nature" est une CLASSIFICATION FACTUELLE, jamais une décision de remboursement.
+
+Si un relevé d'assureur porte une observation d'exclusion (ex: "produits
+pharmaceutiques à usage unique non remboursables"), la RECOPIER telle quelle dans
+observations_globales — sans l'appliquer aux montants ni supprimer de lignes.
+
 4. Répare l'orthographe des noms de médicaments depuis les factures imprimées.
 5. REGROUPEMENT : PHARMACIE et LABORATOIRE → regrouper les lignes d'un MÊME acte (même date, même prestataire) dans UN SEUL objet avec "details_lignes". Ne PAS créer un acte par médicament/analyse.
 5b. LECTURE EXHAUSTIVE PHARMACIE (RÈGLE CRITIQUE) :
@@ -395,6 +561,22 @@ issu de la colonne P.E.C de la facture (pas de décompte disponible)".
    ERREUR GRAVE : attribuer le code PCT d'un médicament à un autre. INTERDIT.
    MÉTHODE : lire le ticket LIGNE PAR LIGNE, de haut en bas, en gardant chaque code sur sa ligne.
    Les VIGNETTES collées à côté confirment le nom du médicament et son prix — les utiliser pour VÉRIFIER, pas pour décaler les codes.
+5d. TOTAL D'UN TICKET PHARMACIE — SOURCE UNIQUE (RÈGLE CRITIQUE) :
+   "montant" d'un acte PHARMACIE = le TOTAL IMPRIMÉ SUR CE TICKET, et rien d'autre.
+   Chercher : ligne "Total :", "TTC :", "Net :", "Arrêtée à la somme de",
+   ou le montant écrit EN TOUTES LETTRES en bas du ticket (source très fiable :
+   "Dix sept dinars cent cinq millimes" = 17.105).
+   🚫 INTERDIT : prendre le total depuis un relevé d'assureur, un décompte, une
+   autre pharmacie, ou la somme d'un autre ticket.
+   Si la somme des details_lignes s'écarte du total imprimé de plus de 0.100 DT :
+     → GARDER le total imprimé (il fait foi).
+     → NE PAS le remplacer par une valeur venue d'ailleurs.
+     → Consigner dans controles.ecart_pharmacie :
+       "ticket <pharmacie> <date> : N lignes lues = X, total imprimé = Y".
+   Si le ticket est masqué par des vignettes collées ET que le total est illisible :
+     montant = "[ILLISIBLE]". JAMAIS un montant emprunté à un autre document.
+   VÉRIFICATION EN TOUTES LETTRES : quand le montant est écrit en lettres ET en
+   chiffres, les deux doivent concorder. Sinon, retenir les LETTRES et signaler.
 6. Illisible sans référence imprimée → "[ILLISIBLE]". AUCUNE INVENTION.
 7. CNAM : si un décompte CNAM est présent (mots-clés : "CNAM", "Décompte de remboursement", "Mnt Remb", "TotRemb"), extraire TOUTES les sections (Consultation, Actes, Médicaments...) avec code, désignation, quantité, date, montant_depense, montant_rembourse, franchise, décision. Extraire totaux.
    ⚠️ NE PAS CONFONDRE avec un RELEVÉ D'ASSUREUR PRIVÉ (STAR, CARTE, BH, GAT...)
@@ -402,6 +584,21 @@ issu de la colonne P.E.C de la facture (pas de décompte disponible)".
    Rubrique | Libellé | Observations | Dépenses | Base-Cotation | Remboursement.
    Ce document N'EST PAS un décompte CNAM → il va dans pieces_justificatives
    (type RELEVE_ASSUREUR) et ne remplit NI "montant" NI "montant_cnam".
+7b. VERROU RELEVÉ ASSUREUR — CONTRÔLE ULTIME AVANT DE RÉPONDRE (RÈGLE CRITIQUE) :
+   Avant de retourner le JSON, passer en revue CHAQUE acte et vérifier qu'AUCUN
+   montant provenant de releve_assureur.lignes[].depenses ou .remboursement
+   n'a été utilisé comme "montant" ou "montant_cnam", SAUF si ce montant est
+   également lisible sur une PIÈCE PRIMAIRE (facture, note d'honoraires, ticket, BS).
+   Si un montant d'acte n'a AUCUNE autre source que le relevé :
+     → le remettre à "" (ou "[ILLISIBLE]" si la pièce existe mais est illisible)
+     → consigner : "montant introuvable sur pièce primaire, valeur relevé X non retenue"
+   Le relevé peut en revanche CONFIRMER un montant déjà lu sur une pièce primaire :
+     ex. dépenses K = 1000.000 confirme note d'honoraires 750 + facture 250.
+     Dans ce cas, remplacer l'observation "montant à confirmer" par
+     "montant confirmé par le relevé assureur".
+   RAPPEL : un relevé d'assureur privé n'est ni une facture ni un décompte CNAM.
+   Ses "Dépenses" sont ce que l'ASSUREUR a retenu comme base, ce qui peut différer
+   de ce qui a été réellement facturé.
 8. CROISEMENT CNAM ↔ ACTES (RÈGLE CRITIQUE) :
    Si un décompte CNAM est présent, pour chaque acte chercher la ligne CNAM correspondante (même type, même date) :
    → Remplir "montant_cnam" avec le montant EFFECTIVEMENT REMBOURSÉ par la CNAM (colonne "Mnt Remb" du décompte).
@@ -533,10 +730,69 @@ issu de la colonne P.E.C de la facture (pas de décompte disponible)".
        n'est pas une erreur, mais doit être signalé "acte sans justificatif".
    C11. Doublons potentiels : même praticien + même date + montants proches
        → signaler "doublon potentiel" plutôt que de fusionner arbitrairement.
+   C12. NOMENCLATURE = RÉFÉRENCE, JAMAIS ARBITRE : matched_nomenclature sert à
+       confirmer la DÉSIGNATION et la FAMILLE d'un code. Sa cotation ne remplace
+       JAMAIS celle lue sur un document. Priorité : lettre confidentielle >
+       facture/BS > nomenclature. Si elles diffèrent, GARDER celle du document et
+       ajouter une note INFORMATIVE ("cotation facturée 100, nomenclature 80").
+       Ce n'est PAS une anomalie : la cotation dépend de la convention appliquée.
+   C13. BS ↔ FACTURE : le "Montant des frais" de la case établissement du BS doit
+       correspondre soit au total de la facture, soit au reste à charge patient
+       clinique. Indiquer explicitement à laquelle des deux il correspond.
+   C14. TOTAL FACTURE : si la grille (page 1) et le récapitulatif (dernière page)
+       donnent deux totaux différents → signaler l'écart et sa cause probable
+       (timbre fiscal, acompte, arrondi).
+   C15. ACTES NON RETENUS PAR L'ASSUREUR : lister les actes présents dans
+       actes_independants mais ABSENTS des lignes du relevé assureur.
+       Ce sont des postes que l'adhérent supporte peut-être intégralement.
+   C16. INTÉGRITÉ DU SCHÉMA : chaque pièce porte "type_piece" (jamais "type").
+       Chaque montant est une chaîne SANS séparateur de milliers ("1000.000",
+       jamais "1,000.000"). Chaque acte promu porte role_intervention,
+       intervention_id et rubrique_proposee.
+   C17. ADDITIVITÉ : la somme de tous les postes (hospitalisation hors compte
+       d'autrui + actes promus + actes indépendants) doit égaler
+       total_global_calcule. Si un poste porte "exclusif_avec", vérifier qu'il
+       n'est pas compté avec son exclusif.
+
    NIVEAU DE CONFIANCE : sur chaque acte, remplir "confiance" =
      "haute"   (montant et praticien lus sur un document IMPRIMÉ),
      "moyenne" (lus sur un manuscrit lisible ou un cachet),
      "faible"  (déduits, partiellement illisibles, ou reconstitués par croisement).
+
+20. CALCUL DU RESTE À CHARGE — CASCADE DES PAYEURS (RÈGLE CRITIQUE) :
+   Le reste à charge se calcule en cascade : la CNAM d'abord (payeur de base,
+   réglée directement à l'établissement conventionné), l'assureur privé ensuite
+   (complémentaire), l'adhérent en dernier.
+
+       reste_a_charge = depense_totale − pec_cnam − remboursement_assureur
+
+   ⚠️ "depense_totale" doit inclure TOUT ce qui est HORS FACTURE, sinon le reste
+   est sous-estimé :
+       facture(s) clinique TTC (compte d'autrui inclus)
+     + honoraires réglés en direct (notes d'honoraires, lignes marquées N.P.)
+     + pharmacies de ville
+     + tout acte ambulatoire du dossier
+
+   Remplir le bloc "reglement" au niveau du dossier (voir schéma JSON).
+
+   CONTRÔLES OBLIGATOIRES (signaler, ne JAMAIS corriger un montant) :
+     R1. DOUBLE PRISE EN CHARGE : un poste figurant à la fois en colonne P.E.C de
+         la facture (payé par la CNAM) ET dans une ligne de dépenses du relevé
+         assureur → consigner "double prise en charge potentielle sur <poste> :
+         part CNAM X, base retenue par l'assureur Y". Selon le contrat c'est
+         normal (complémentaire calculant sur la dépense brute puis plafonnant)
+         ou c'est un sur-remboursement. NE PAS TRANCHER, signaler.
+     R2. LIGNES ASSUREUR NON RAPPROCHÉES : chaque ligne de dépense du relevé doit
+         être rapprochée d'un acte ou d'une ligne de facture. Sans rapprochement →
+         "ligne assureur non rapprochée : rubrique R, montant M".
+     R3. ACTES NON SOUMIS : actes du dossier absents du relevé → "acte non soumis
+         ou non retenu par l'assureur".
+     R4. ÉCART GLOBAL : si total_depenses du relevé ≠ somme des dépenses extraites
+         → consigner l'écart chiffré et les postes qui l'expliquent.
+
+   🚫 NE JAMAIS calculer un taux de remboursement, appliquer un plafond, ni
+   décider qu'un poste est remboursable : le barème appartient au CONTRAT et sera
+   appliqué en aval. L'extraction fournit les montants, pas les décisions.
 
 Retourne UNIQUEMENT ce JSON :
 
@@ -575,8 +831,12 @@ Retourne UNIQUEMENT ce JSON :
               "code_cnam_praticien": "Code CNAM du professionnel de santé (ex: 1/12896/11) — celui du PRATICIEN, jamais du patient",
               "acte": "Désignation EXACTE (ex: Consultation spécialisée cardiologie, Visite à domicile, Accouchement par césarienne, Anesthésie générale, Aide opératoire)",
               "role_intervention": "Chirurgien | Anesthésiste | Aide opératoire | Instrumentiste | Panseur | Pédiatre | Autre — OBLIGATOIRE pour tout acte rattaché à une intervention. '' sinon.",
+              "intervention_id": "Identifiant de chaînage partagé par tous les postes de la même intervention (ex: INT-1). '' si l'acte n'est lié à aucune intervention.",
+              "rubrique_proposee": "K | FAN | SO | JHC | PH | CS | AUTRE — classification par nature économique du poste (voir règle 3k). PROPOSITION, jamais une décision de barème.",
+              "rubrique_assureur": "Code de rubrique tel qu'écrit sur le relevé d'assureur, s'il en existe un pour ce poste. '' sinon.",
+              "exclusif_avec": ["Libellés ou identifiants des postes avec lesquels ce montant ne doit PAS être additionné (même dépense sous un autre angle). Tableau vide si aucun."],
               "patient_concerne": "adherent | conjoint | enfant | nouveau_ne",
-              "code_acte": "Code CNAM de l'acte si visible (ex: MJC030040)",
+              "code_acte": "Code CNAM de l'acte si visible (ex: MJC030040). OBLIGATOIRE sur un acte 'Chirurgien' dès qu'un code d'intervention existe dans le dossier (voir règle CODIFICATION).",
               "lettre_cle": "KC ou K ou KE ou C ou CS ou V si visible",
               "cotation": "Nombre après la lettre-clé (ex: 50 pour KC50, 100 pour KC100)",
               "forfait": "true si l'acte est facturé au forfait conventionnel (accouchement voie basse, etc.), false sinon",
@@ -704,9 +964,14 @@ Retourne UNIQUEMENT ce JSON :
               },
               "pharmacie_interne": {
                 "lignes": [
-                  {"prestation": "Nom EXACT du médicament/consommable/dispositif (ex: Sevoflurane, Oxytocine 5 unités/mL, Compresse stérile)", "date": "", "quantite": "", "prix_unitaire": "", "tva": "", "montant_ht": "", "montant": "", "patient_concerne": "adherent | nouveau_ne"}
+                  {"prestation": "Nom EXACT du médicament/consommable/dispositif (ex: Sevoflurane, Oxytocine 5 unités/mL, Compresse stérile)", "date": "", "quantite": "", "prix_unitaire": "", "tva": "", "montant_ht": "", "montant": "", "nature": "MEDICAMENT | DISPOSITIF_MEDICAL | CONSOMMABLE_UU | HOTELIER", "patient_concerne": "adherent | nouveau_ne"}
                 ],
                 "total": "Somme des lignes pharmacie interne (SANS aucun ajustement)",
+                "total_medicaments": "Somme des lignes nature = MEDICAMENT",
+                "total_dispositifs": "Somme des lignes nature = DISPOSITIF_MEDICAL",
+                "total_consommables": "Somme des lignes nature = CONSOMMABLE_UU",
+                "total_hotelier": "Somme des lignes nature = HOTELIER",
+                "nombre_lignes_annexe": "Nombre de lignes imprimées sur l'annexe — doit égaler la taille de lignes[]",
                 "source_detail": "detail_annexe | lignes_groupees — indiquer d'où vient le détail"
               },
               "autres_frais": {
@@ -716,7 +981,10 @@ Retourne UNIQUEMENT ce JSON :
                 "total": "Somme des lignes autres frais (SANS aucun ajustement)"
               },
               "total_clinique_calcule": "sejour.total + bloc_operatoire.total + pharmacie_interne.total + autres_frais.total (hors ajustements)",
-              "total_clinique_facture": "Le 'Total Clinique' IMPRIMÉ sur la facture, recopié tel quel",
+              "total_clinique_facture": "La ligne 'Total Clinique' de la GRILLE de la facture, colonne T.T.C, AVANT le timbre fiscal. NE PAS prendre 'Total Clinique T.T.C.' du RÉCAPITULATIF de la dernière page, qui inclut le timbre. VÉRIFICATION : total_clinique_calcule + ecart_ajustements doit être EXACTEMENT égal à cette valeur ; sinon la mauvaise ligne a été lue.",
+              "intervention_id": "Identifiant de chaînage de l'intervention principale de ce séjour (ex: INT-1)",
+              "cout_total_intervention": "Somme de TOUS les postes portant le même intervention_id (clinique + praticiens). INDICATEUR d'affichage uniquement, JAMAIS une base de remboursement.",
+              "vue_recommandee": "groupee | detaillee — 'groupee' si forfait = true (accouchement voie basse, acte au forfait), 'detaillee' sinon (césarienne, chirurgie cotée)",
               "ecart_ajustements": "total_clinique_facture - total_clinique_calcule (somme des lignes AJUSTEMENT écartées)",
               "total_clinique": "Alias de total_clinique_calcule — conservé pour compatibilité avec l'existant",
               "total_acte_cote": "Somme des montants de TOUTES les lignes classees acte_cote (prestataires du compte d'autrui et notes d'honoraires promus en actes independants). C'est un CONTROLE : il doit etre egal a la somme des montants des actes portant rattachement_hospitalisation vers cette hospitalisation. Ne JAMAIS renvoyer 0 s'il existe au moins un acte promu.",
@@ -969,7 +1237,7 @@ Retourne UNIQUEMENT ce JSON :
             "total_radiologie": "Somme Actes Radio/Imagerie ou 0",
             "total_pharmacie": "Somme pharmacie (officines de ville uniquement) ou 0",
             "total_laboratoire": "Total labo ou 0",
-            "total_hospitalisation": "Total hospitalisation/clinique ou 0",
+            "total_hospitalisation": "total_clinique_calcule + timbre_fiscal UNIQUEMENT, ou 0. 🚫 NE JAMAIS utiliser le total de la facture : les prestataires du compte d'autrui sont DÉJÀ comptés dans total_medecin / total_laboratoire / total_radiologie. Les additionner ici crée un DOUBLE COMPTAGE. CONTRÔLE : somme des actes portant rattachement_hospitalisation = total_compte_autrui imprimé + somme des honoraires réglés en direct (notes d'honoraires et lignes N.P.). Si l'égalité ne tombe pas, consigner dans controles.anomalies au lieu d'ajuster un montant.",
             "total_dentaire": "Total actes dentaires ou 0",
             "total_optique": "Total actes optique ou 0",
             "total_paramedical": "Total actes paramédicaux ou 0",
@@ -977,6 +1245,24 @@ Retourne UNIQUEMENT ce JSON :
             "total_cnam": "Total remboursé par la CNAM (depuis le décompte CNAM si présent, sinon 0)",
             "total_nouveau_ne": "Somme des actes portant patient_concerne = nouveau_ne, ou 0",
             "devise": "DT"
+          },
+          "reglement": {
+            "depense_totale": "facture(s) clinique TTC + honoraires hors facture (notes d'honoraires, lignes N.P.) + pharmacies de ville + actes ambulatoires. TOUT ce qui est sorti de la poche de l'adhérent ou facturé pour son compte.",
+            "detail_depense": {
+              "facture_clinique_ttc": "",
+              "honoraires_hors_facture": "Somme des notes d'honoraires réglées en direct et des lignes N.P.",
+              "pharmacies_ville": "",
+              "autres_actes": ""
+            },
+            "pec_cnam": "Part CNAM. Priorité : décompte CNAM > décision de prise en charge chiffrée > colonne P.E.C de la facture. '' si aucune.",
+            "source_pec_cnam": "decompte | decision | colonne_pec | aucune",
+            "remboursement_assureur": "Net à régler du relevé d'assureur, s'il existe. '' sinon.",
+            "assureur_emetteur": "Nom de l'assureur ayant émis le relevé",
+            "avance_patient": "Acompte(s) versé(s) à l'établissement, valeur absolue",
+            "regle_directement_praticiens": "Somme versée en direct aux praticiens (lignes N.P. et notes d'honoraires)",
+            "reste_a_charge": "depense_totale − pec_cnam − remboursement_assureur",
+            "verification_tresorerie": "avance_patient + net_a_payer + regle_directement_praticiens + pharmacies_ville = ce que l'adhérent a réellement décaissé. Comparer à reste_a_charge + remboursement_assureur.",
+            "note": "Aucun taux ni plafond n'est appliqué ici. Le barème dépend du contrat et sera appliqué en aval."
           },
           "controles": {
             "ecart_total_clinique": "total_clinique_facture - total_clinique_calcule (= somme des ajustements écartés)",
@@ -989,6 +1275,15 @@ Retourne UNIQUEMENT ce JSON :
             "doublons_potentiels": ["Description des doublons suspectés, sans fusion arbitraire"],
             "incoherences_dates": ["Dates hors séjour, facture antérieure à la sortie, etc."],
             "documents_ignores": ["BS vierges, bulletins d'autres adhérents, pages blanches"],
+            "cotation_chirurgien_propagee": "true | false — false si un acte 'Chirurgien' reste sans code_acte/cotation alors qu'un code d'intervention existe dans le dossier (DÉFAUT BLOQUANT)",
+            "montants_issus_du_releve_rejetes": ["Montants qui n'avaient pour seule source qu'un relevé d'assureur et qui ont été remis à vide (règle 7b)"],
+            "double_prise_en_charge": ["R1 — postes couverts à la fois par la P.E.C CNAM et par le relevé assureur"],
+            "lignes_assureur_non_rapprochees": ["R2 — lignes du relevé sans acte ou ligne de facture correspondante"],
+            "actes_non_soumis_assureur": ["R3 — actes du dossier absents du relevé assureur"],
+            "ecart_releve_assureur": "R4 — total_depenses du relevé vs somme des dépenses extraites, avec les postes qui expliquent l'écart",
+            "ecart_total_facture": "C14 — écart entre la grille (page 1) et le récapitulatif (dernière page), avec sa cause probable",
+            "correspondance_montant_bs": "C13 — à quoi correspond le 'Montant des frais' de la case établissement du BS (total facture ou reste à charge patient)",
+            "notes_cotation": ["C12 — écarts informatifs entre cotation facturée et cotation de la nomenclature"],
             "anomalies": ["Toute autre anomalie détectée"]
           },
           "observations_globales": "Synthèse en texte libre des points d'attention pour le gestionnaire (plafonds atteints signalés par un relevé, montants à confirmer, illisibilités bloquantes, présence d'un nouveau-né, postes non remboursables comme l'accompagnant...)"
@@ -1107,6 +1402,16 @@ IMPORTANT : le BS est le document PRINCIPAL. Les autres documents sont des PIÈC
    e) Si un rôle attendu est introuvable → le consigner dans controles.roles_manquants. NE PAS l'inventer.
    f) Accouchement : césarienne → KC + cotation ; voie basse → forfait sans KC.
    g) Séparer les actes du NOUVEAU-NÉ (pédiatre, vaccin, ordonnance "Bébé de Mme X") avec patient_concerne = "nouveau_ne".
+   h) PROPAGER le code d'intervention (lettre confidentielle > ligne "Acte : <CODE>" de
+      la facture > décision de prise en charge > BS) vers l'acte du CHIRURGIEN :
+      code_acte + lettre_cle + cotation. C'est une COPIE, pas un déplacement.
+      Un chirurgien sans cotation alors qu'un code existe = DÉFAUT BLOQUANT.
+   i) CHAÎNER tous les postes de l'intervention avec le même "intervention_id" et
+      attribuer à chacun sa "rubrique_proposee" (K / FAN / SO / JHC / PH / CS).
+      La ligne "Acte : <CODE>" de la clinique est en "SO", PAS en "K" :
+      son montant reste à la clinique, seule son identification va au chirurgien.
+   j) NE JAMAIS additionner les postes de l'intervention en un montant unique.
+      Renseigner cout_total_intervention comme INDICATEUR, et vue_recommandee.
 
 ÉTAPE 6 — CROISER CNAM :
    Si un décompte CNAM est présent → pour chaque acte, chercher la ligne CNAM correspondante.
@@ -1127,4 +1432,23 @@ IMPORTANT : le BS est le document PRINCIPAL. Les autres documents sont des PIÈC
    f) Aucun doublon (un même soin ne doit apparaître qu'UNE fois) ?
    g) Les actes du nouveau-né sont-ils bien séparés ?
    h) Remplir intégralement le bloc "controles" et "observations_globales".
-   i) Attribuer un niveau de "confiance" à chaque acte.`;
+   i) Attribuer un niveau de "confiance" à chaque acte.
+
+ÉTAPE 9 — CHECKLIST BLOQUANTE (à passer AVANT de répondre) :
+   Répondre mentalement OUI à chacune de ces questions. Si une réponse est NON,
+   corriger AVANT de retourner le JSON.
+   1. Chaque acte "Chirurgien" a-t-il code_acte ET cotation renseignés dès qu'un
+      code d'intervention existe quelque part dans le dossier ?
+   2. total_hospitalisation exclut-il bien le compte d'autrui ?
+   3. Aucun montant d'acte ne provient-il uniquement d'un relevé d'assureur ?
+   4. Le total de chaque ticket pharmacie vient-il bien de CE ticket ?
+   5. total_clinique_calcule + ecart_ajustements = total_clinique_facture (grille) ?
+   6. Aucune ligne "AJUSTEMENT" ne subsiste-t-elle dans les sections ?
+   7. Chaque poste d'intervention a-t-il intervention_id ET rubrique_proposee ?
+   8. Le nombre de lignes de pharmacie interne extraites = nombre imprimé ?
+   9. La somme des 4 sous-totaux par nature = pharmacie_interne.total ?
+   10. Le nom de l'adhérent vient-il d'une source IMPRIMÉE, pas du manuscrit ?
+   11. Tous les montants sont-ils sans séparateur de milliers ?
+   12. Chaque pièce porte-t-elle "type_piece" (et non "type") ?
+   13. Le bloc "reglement" est-il rempli avec la cascade CNAM puis assureur ?
+   14. Une addition naïve de tous les postes donne-t-elle total_global_calcule ?`;
