@@ -487,6 +487,33 @@ export function postProcess(data) {
     h.total_clinique = h.total_clinique_calcule;
     const facture = num(h.total_clinique_facture);
     if (facture > 0) h.ecart_ajustements = fmt(facture - calcule);
+
+    // D1 — VERROU 2bis : total_clinique_ht recalculé depuis les lignes_clinique
+    const recap = h.recapitulatif_facture;
+    if (recap) {
+      let sommeHT = 0;
+      for (const p of data.pieces_justificatives || []) {
+        for (const l of p.contenu?.facture_details?.lignes_clinique || []) {
+          sommeHT += num(l.montant_ht);
+        }
+      }
+      if (sommeHT > 0 && Math.abs(num(recap.total_clinique_ht) - sommeHT) > 1) {
+        const ancien = recap.total_clinique_ht;
+        recap.total_clinique_ht = fmt(sommeHT);
+        warn.push(
+          `total_clinique_ht corrigé : ${ancien} (colonne P.E.C) remplacé par ${fmt(sommeHT)} (somme des HT)`,
+        );
+      }
+      // Cohérence HT + TVA ≈ TTC
+      const ht = num(recap.total_clinique_ht);
+      const tva = num(recap.total_tva);
+      const ttc = num(recap.total_clinique_ttc || h.total_clinique_calcule);
+      if (ht > 0 && tva >= 0 && ttc > 0 && Math.abs(ht + tva - ttc) > 1) {
+        warn.push(
+          `Incohérence facture : HT ${fmt(ht)} + TVA ${fmt(tva)} = ${fmt(ht + tva)}, TTC déclaré ${fmt(ttc)} (écart ${fmt(Math.abs(ht + tva - ttc))})`,
+        );
+      }
+    }
   }
 
   // ═══ VERROU 2 — Sous-totaux par nature (pharmacie interne) ═════════════════
@@ -748,11 +775,28 @@ export function postProcess(data) {
         "PARAMEDICAL",
       ].reduce((s, t) => s + sommeType(t), 0),
   );
-  S.total_nouveau_ne = fmt(
-    actes
+  // BONUS — total_nouveau_ne avec lignes hospitalisation
+  {
+    const totalActesNN = actes
       .filter((a) => a.patient_concerne === "nouveau_ne")
-      .reduce((s, a) => s + num(a.montant), 0),
-  );
+      .reduce((s, a) => s + num(a.montant), 0);
+    let totalLignesNN = 0;
+    for (const { a: h } of hospis) {
+      for (const sec of SECTIONS) {
+        for (const ligne of h[sec]?.lignes || []) {
+          if (ligne.patient_concerne === "nouveau_ne") {
+            totalLignesNN += num(ligne.montant);
+          }
+        }
+      }
+    }
+    S.total_nouveau_ne = fmt(totalActesNN + totalLignesNN);
+    S.detail_nouveau_ne = {
+      actes: fmt(totalActesNN),
+      lignes_hospitalisation: fmt(totalLignesNN),
+      total: fmt(totalActesNN + totalLignesNN),
+    };
+  }
   S.devise = S.devise || "DT";
 
   let sommeEcartCA = 0;
@@ -860,14 +904,182 @@ export function postProcess(data) {
 
   // ═══ VERROU 6 — Cohérence des tickets pharmacie ════════════════════════════
   for (const a of actes) {
-    if (a.type !== "PHARMACIE" || !Array.isArray(a.details_lignes)) continue;
+    if (a.type !== "PHARMACIE") continue;
+    if (!Array.isArray(a.details_lignes)) continue;
+
+    // D4 — Dédoublonnage details_lignes (même médicament + même code_amm + même prix)
+    {
+      const seen = new Set();
+      const deduped = [];
+      const dupNames = [];
+      for (const dl of a.details_lignes) {
+        const key =
+          normCompare(dl.medicament || dl.designation || "") +
+          "|" + normCompare(dl.code_amm || "") +
+          "|" + fmt(num(dl.total_ligne));
+        if (seen.has(key)) {
+          dupNames.push(dl.medicament || dl.designation || "?");
+          continue;
+        }
+        seen.add(key);
+        deduped.push(dl);
+      }
+      if (dupNames.length > 0) {
+        warn.push(
+          `Ticket ${a.pharmacie || "?"} : ${dupNames.length} ligne(s) dupliquée(s) supprimée(s) : ${dupNames.join(", ")}`,
+        );
+        a.details_lignes = deduped;
+      }
+    }
+
     const somme = a.details_lignes.reduce((s, l) => s + num(l.total_ligne), 0);
     const total = num(a.montant);
+
+    // D3 — Montant illisible mais lignes exploitables
+    if (total === 0 && somme > 0) {
+      a.montant_lignes_calcule = fmt(somme);
+      warn.push(
+        `Ticket ${a.pharmacie || "?"} ${a.date || ""} : montant total illisible, somme des ${a.details_lignes.length} lignes = ${fmt(somme)} — montant non comptabilisé dans les totaux`,
+      );
+    }
+
     if (total > 0 && somme > 0 && Math.abs(somme - total) > 0.1) {
       warn.push(
         `Ticket ${a.pharmacie || "?"} ${a.date || ""} : ${a.details_lignes.length} lignes = ` +
           `${fmt(somme)}, total déclaré ${fmt(total)} (écart ${fmt(total - somme)})`,
       );
+    }
+  }
+
+  // ═══ VERROU 14 — Fusion des actes PHARMACIE même officine + même date ══════
+  {
+    const pharmaIndexes = [];
+    for (let i = 0; i < actes.length; i++) {
+      if (actes[i].type === "PHARMACIE") pharmaIndexes.push(i);
+    }
+    // Grouper par (pharmacie normalisée, date)
+    const groups = new Map();
+    for (const i of pharmaIndexes) {
+      const a = actes[i];
+      // Trouver un représentant clé : on compare via sameName, pas d'équivalence exacte
+      let gKey = null;
+      for (const [k] of groups) {
+        const [kName, kDate] = k.split("|||");
+        if (sameName(kName, a.pharmacie || "") && kDate === (a.date || "")) {
+          gKey = k;
+          break;
+        }
+      }
+      if (!gKey) gKey = (a.pharmacie || "") + "|||" + (a.date || "");
+      if (!groups.has(gKey)) groups.set(gKey, []);
+      groups.get(gKey).push(i);
+    }
+
+    // Fusionner les groupes de taille > 1
+    const indexesToRemove = new Set();
+    for (const [, idxs] of groups) {
+      if (idxs.length < 2) continue;
+      const keep = actes[idxs[0]];
+      for (let k = 1; k < idxs.length; k++) {
+        const donor = actes[idxs[k]];
+        // Fusionner details_lignes avec dédoublonnage
+        if (Array.isArray(donor.details_lignes)) {
+          const existingKeys = new Set();
+          for (const dl of keep.details_lignes || []) {
+            existingKeys.add(
+              normCompare(dl.medicament || dl.designation || "") +
+              "|" + normCompare(dl.code_amm || "") +
+              "|" + fmt(num(dl.total_ligne)),
+            );
+          }
+          keep.details_lignes = keep.details_lignes || [];
+          for (const dl of donor.details_lignes) {
+            const key =
+              normCompare(dl.medicament || dl.designation || "") +
+              "|" + normCompare(dl.code_amm || "") +
+              "|" + fmt(num(dl.total_ligne));
+            if (!existingKeys.has(key)) {
+              keep.details_lignes.push(dl);
+              existingKeys.add(key);
+            }
+          }
+        }
+        // Montant : si l'un est illisible, garder "[ILLISIBLE]"
+        const keepM = num(keep.montant);
+        const donorM = num(donor.montant);
+        const keepIllisible = keepM === 0 && String(keep.montant || "").includes("ILLISIBLE");
+        const donorIllisible = donorM === 0 && String(donor.montant || "").includes("ILLISIBLE");
+        if (keepIllisible || donorIllisible) {
+          keep.montant = "[ILLISIBLE]";
+          const somme = (keep.details_lignes || []).reduce((s, l) => s + num(l.total_ligne), 0);
+          if (somme > 0) keep.montant_lignes_calcule = fmt(somme);
+        } else {
+          keep.montant = fmt(keepM + donorM);
+        }
+        // Observations et confiance
+        if (donor.observations) addObs(keep, donor.observations);
+        if (donor.confiance === "faible" || (donor.confiance === "moyenne" && keep.confiance !== "faible")) {
+          keep.confiance = donor.confiance;
+        }
+        indexesToRemove.add(idxs[k]);
+      }
+      warn.push(
+        `${idxs.length - 1} acte(s) PHARMACIE fusionné(s) : ${keep.pharmacie || "?"} ${keep.date || ""}`,
+      );
+    }
+
+    if (indexesToRemove.size > 0) {
+      // Construire la table de remappage ancien index → nouvel index
+      const oldToNew = new Map();
+      let newIdx = 0;
+      for (let i = 0; i < actes.length; i++) {
+        if (indexesToRemove.has(i)) {
+          // Trouver l'index conservé de ce groupe
+          for (const [, idxs] of groups) {
+            if (idxs.includes(i)) {
+              oldToNew.set(i, oldToNew.get(idxs[0]) ?? idxs[0]);
+              break;
+            }
+          }
+        } else {
+          oldToNew.set(i, newIdx);
+          newIdx++;
+        }
+      }
+      // Résoudre les renvois : l'index conservé a aussi été remappé
+      for (const [old, mapped] of oldToNew) {
+        if (indexesToRemove.has(old) && oldToNew.has(mapped) && !indexesToRemove.has(mapped)) {
+          oldToNew.set(old, oldToNew.get(mapped));
+        }
+      }
+
+      // Remapper rattachement_hospitalisation sur les actes restants
+      for (let i = 0; i < actes.length; i++) {
+        if (indexesToRemove.has(i)) continue;
+        const a = actes[i];
+        if (a.rattachement_hospitalisation != null && oldToNew.has(a.rattachement_hospitalisation)) {
+          a.rattachement_hospitalisation = oldToNew.get(a.rattachement_hospitalisation);
+        }
+      }
+      // Remapper rattachement_acte des pièces justificatives
+      for (const p of data.pieces_justificatives || []) {
+        if (p.rattachement_acte != null && oldToNew.has(p.rattachement_acte)) {
+          p.rattachement_acte = oldToNew.get(p.rattachement_acte);
+        }
+      }
+
+      // Supprimer les actes fusionnés (du dernier au premier pour préserver les index)
+      const sorted = [...indexesToRemove].sort((a, b) => b - a);
+      for (const i of sorted) {
+        actes.splice(i, 1);
+      }
+
+      // Recalculer les totaux pharmacie après fusion
+      const pharmaVillePost = actes
+        .filter((a) => a.type === "PHARMACIE")
+        .reduce((s, a) => s + num(a.montant), 0);
+      data.synthese = data.synthese || {};
+      data.synthese.total_pharmacie = fmt(pharmaVillePost);
     }
   }
 
@@ -1011,6 +1223,20 @@ export function postProcess(data) {
     note: "Aucun taux ni plafond appliqué. Le barème dépend du contrat et sera appliqué en aval.",
   };
 
+  // D2 — verification_tresorerie recalculée
+  {
+    const acompte = hospis.reduce(
+      (s, { a: h }) => s + num(h.recapitulatif_facture?.acompte), 0,
+    );
+    const netAPayer = hospis.reduce(
+      (s, { a: h }) => s + num(h.recapitulatif_facture?.net_a_payer), 0,
+    );
+    const totalDecaisse = acompte + netAPayer + horsFacture + pharmaVille;
+    data.reglement.verification_tresorerie =
+      `décaissé par l'adhérent ≈ ${fmt(acompte)} (acompte) + ${fmt(netAPayer)} (solde clinique)` +
+      ` + ${fmt(horsFacture)} (direct praticiens) + ${fmt(pharmaVille)} (pharmacies) = ${fmt(totalDecaisse)}`;
+  }
+
   // ═══ VERROU 13 — Protection nomenclature + cohérence rôle ═════════════════
   const MOTS_SPECIALITE = [
     "anesth", "gyneco", "obstetri", "pediatr", "chirurg", "radiolog",
@@ -1018,6 +1244,22 @@ export function postProcess(data) {
     "orthop", "gastro", "neuro", "pneumo", "endocrin", "reanima",
     "medecin", "generaliste", "interniste", "orl",
   ];
+  const ABREV_SPECIALITE = {
+    GYN: "Gynécologue", GYNECOLOGUE: "Gynécologue", GYNECO: "Gynécologue",
+    PED: "Pédiatre", PEDIATRE: "Pédiatre",
+    ANES: "Anesthésiste", ANESTH: "Anesthésiste", ANESTHESISTE: "Anesthésiste",
+    CHIR: "Chirurgien", CHIRURGIEN: "Chirurgien",
+    RAD: "Radiologue", RADIOLOGUE: "Radiologue",
+    CARDIO: "Cardiologue", CARDIOLOGUE: "Cardiologue",
+    ORL: "ORL",
+    DERM: "Dermatologue", DERMATOLOGUE: "Dermatologue",
+    GASTRO: "Gastro-entérologue",
+    NEURO: "Neurologue", NEUROLOGUE: "Neurologue",
+    PNEUMO: "Pneumologue", PNEUMOLOGUE: "Pneumologue",
+    URO: "Urologue", UROLOGUE: "Urologue",
+    ORTHO: "Orthopédiste", ORTHOPEDISTE: "Orthopédiste",
+    OPH: "Ophtalmologue", OPHTALMO: "Ophtalmologue",
+  };
   const GESTES_CHIRURGICAUX = [
     "cesarienne", "appendicectomie", "cholecystectomie", "hernie",
     "accouchement", "circoncision", "thyroidectomie", "hysterectomie",
@@ -1097,23 +1339,26 @@ export function postProcess(data) {
       }
     }
 
-    // 13d — Spécialité non fiable : si role_intervention et specialite absente ou
-    //        ne contient aucun mot de vocabulaire médical → remplacer par specialite_cachet
+    // 13d — Spécialité : priorité cachet > abréviation > mot valide > ""
     if (a.role_intervention) {
       const specNorm = normCompare(a.specialite || "");
       const estSpecValide = specNorm && MOTS_SPECIALITE.some((m) => specNorm.includes(m));
-      if (!estSpecValide) {
-        let cachet = null;
-        for (const p of data.pieces_justificatives || []) {
-          const nh = p.contenu?.note_honoraires;
-          if (!nh?.specialite_cachet) continue;
-          const nhPrat = nh.praticien || p.praticien || "";
-          if (sameName(nhPrat, a.praticien)) {
-            cachet = nh.specialite_cachet;
-            break;
-          }
+
+      // Chercher cachet
+      let cachet = null;
+      for (const p of data.pieces_justificatives || []) {
+        const nh = p.contenu?.note_honoraires;
+        if (!nh?.specialite_cachet) continue;
+        const nhPrat = nh.praticien || p.praticien || "";
+        if (sameName(nhPrat, a.praticien)) {
+          cachet = nh.specialite_cachet;
+          break;
         }
-        if (cachet) {
+      }
+
+      if (cachet) {
+        // Priorité 1 : cachet
+        if (a.specialite !== cachet) {
           const ancien = a.specialite;
           a.specialite = cachet;
           if (ancien) {
@@ -1121,7 +1366,22 @@ export function postProcess(data) {
               `spécialité '${ancien}' non fiable pour ${a.praticien} — remplacée par '${cachet}' (cachet)`,
             );
           }
-        } else if (a.specialite) {
+        }
+      } else if (!estSpecValide && a.specialite) {
+        // D6 — Tenter de développer l'abréviation
+        const abrevKey = String(a.specialite)
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^A-Za-z]/g, "")
+          .toUpperCase();
+        const developpee = ABREV_SPECIALITE[abrevKey];
+        if (developpee) {
+          const ancien = a.specialite;
+          a.specialite = developpee;
+          warn.push(
+            `spécialité '${ancien}' développée en '${developpee}'`,
+          );
+        } else {
           const ancien = a.specialite;
           a.specialite = "";
           warn.push(
@@ -1142,6 +1402,17 @@ export function postProcess(data) {
     hospis.reduce((s, { a: h }) => s + num(h.ecart_ajustements), 0),
   );
   data.controles.ecart_compte_autrui = fmt(sommeEcartCA);
+
+  // D2 — ecart_releve_assureur recalculé
+  if (rel && Array.isArray(rel.lignes)) {
+    const totalDepReleve = rel.lignes.reduce((s, l) => s + num(l.depenses), 0);
+    const depenseCalc = num(data.reglement?.depense_totale);
+    const diff = totalDepReleve - depenseCalc;
+    data.controles.ecart_releve_assureur =
+      `total_depenses relevé ${fmt(totalDepReleve)} vs dépenses extraites ${fmt(depenseCalc)} (écart ${fmt(diff)})`;
+  } else {
+    data.controles.ecart_releve_assureur = "";
+  }
 
   return data;
 }
