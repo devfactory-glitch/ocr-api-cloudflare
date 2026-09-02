@@ -63,6 +63,9 @@ function nameTokens(s) {
 }
 
 function sameName(a, b) {
+  if (!a || !b) return false;
+  // Fast path : même chaîne normalisée → match évident
+  if (normCompare(a) === normCompare(b)) return true;
   const A = nameTokens(a),
     B = nameTokens(b);
   if (A.size === 0 || B.size === 0) return false;
@@ -488,30 +491,63 @@ export function postProcess(data) {
     const facture = num(h.total_clinique_facture);
     if (facture > 0) h.ecart_ajustements = fmt(facture - calcule);
 
-    // D1 — VERROU 2bis : total_clinique_ht recalculé depuis les lignes_clinique
+    // D1/E3/E4 — VERROU 2bis : total_clinique_ht corrigé
     const recap = h.recapitulatif_facture;
     if (recap) {
+      // E3a — Traçabilité de la valeur d'origine
+      if (recap.total_clinique_ht && !recap.total_clinique_ht_source) {
+        recap.total_clinique_ht_source = recap.total_clinique_ht;
+      }
+
+      // Candidat 1 : somme des montant_ht des lignes_clinique
       let sommeHT = 0;
+      let factureDetails = null;
       for (const p of data.pieces_justificatives || []) {
-        for (const l of p.contenu?.facture_details?.lignes_clinique || []) {
+        const fd = p.contenu?.facture_details;
+        if (!fd) continue;
+        if (fd.lignes_clinique) factureDetails = fd;
+        for (const l of fd.lignes_clinique || []) {
           sommeHT += num(l.montant_ht);
         }
       }
-      if (sommeHT > 0 && Math.abs(num(recap.total_clinique_ht) - sommeHT) > 1) {
-        const ancien = recap.total_clinique_ht;
-        recap.total_clinique_ht = fmt(sommeHT);
-        warn.push(
-          `total_clinique_ht corrigé : ${ancien} (colonne P.E.C) remplacé par ${fmt(sommeHT)} (somme des HT)`,
-        );
+
+      // Candidat 2 : htDeduit = TTC - TVA (si renseignés dans facture_details ou recap)
+      const fdTTC = num(factureDetails?.total_clinique_ttc || recap.total_clinique_ttc);
+      const fdTVA = num(factureDetails?.total_clinique_tva || recap.total_tva);
+      const htDeduit = (fdTTC > 0 && fdTVA >= 0) ? fdTTC - fdTVA : 0;
+
+      // Choisir le meilleur candidat
+      const ancienHT = num(recap.total_clinique_ht);
+      if (sommeHT > 0 || htDeduit > 0) {
+        let retenu = sommeHT;
+        if (sommeHT > 0 && htDeduit > 0) {
+          // Retenir le plus proche du HT déclaré ou de htDeduit si différent
+          retenu = Math.abs(sommeHT - htDeduit) < 1 ? sommeHT :
+                   (Math.abs(htDeduit - ancienHT) < Math.abs(sommeHT - ancienHT) ? htDeduit : htDeduit);
+          warn.push(
+            `total_clinique_ht : somme des lignes ${fmt(sommeHT)}, TTC-TVA ${fmt(htDeduit)}, retenu ${fmt(retenu)}`,
+          );
+        }
+        if (retenu > 0 && Math.abs(ancienHT - retenu) > 1) {
+          recap.total_clinique_ht = fmt(retenu);
+        }
       }
-      // Cohérence HT + TVA ≈ TTC
-      const ht = num(recap.total_clinique_ht);
-      const tva = num(recap.total_tva);
-      const ttc = num(recap.total_clinique_ttc || h.total_clinique_calcule);
-      if (ht > 0 && tva >= 0 && ttc > 0 && Math.abs(ht + tva - ttc) > 1) {
-        warn.push(
-          `Incohérence facture : HT ${fmt(ht)} + TVA ${fmt(tva)} = ${fmt(ht + tva)}, TTC déclaré ${fmt(ttc)} (écart ${fmt(Math.abs(ht + tva - ttc))})`,
-        );
+
+      // E3b — Propager dans facture_details
+      if (factureDetails && recap.total_clinique_ht) {
+        factureDetails.total_clinique_ht = recap.total_clinique_ht;
+      }
+
+      // E4 — Cohérence HT + TVA ≈ TTC : comparer à total_clinique_facture (inclut ajustements)
+      const factureRef = num(h.total_clinique_facture);
+      if (factureRef > 0) {
+        const ht = num(recap.total_clinique_ht);
+        const tva = num(recap.total_tva);
+        if (ht > 0 && tva >= 0 && Math.abs(ht + tva - factureRef) > 2) {
+          warn.push(
+            `Incohérence facture : HT ${fmt(ht)} + TVA ${fmt(tva)} = ${fmt(ht + tva)}, TTC facturé ${fmt(factureRef)} (écart ${fmt(Math.abs(ht + tva - factureRef))})`,
+          );
+        }
       }
     }
   }
@@ -951,8 +987,18 @@ export function postProcess(data) {
     }
   }
 
+  // BONUS — nombre_lignes_ticket après dédoublonnage
+  for (const a of actes) {
+    if (a.type === "PHARMACIE" && Array.isArray(a.details_lignes)) {
+      a.nombre_lignes_ticket = String(a.details_lignes.length);
+    }
+  }
+
   // ═══ VERROU 14 — Fusion des actes PHARMACIE même officine + même date ══════
   {
+    const isIllisible = (a) =>
+      num(a.montant) === 0 && String(a.montant || "").toUpperCase().includes("ILLISIBLE");
+
     const pharmaIndexes = [];
     for (let i = 0; i < actes.length; i++) {
       if (actes[i].type === "PHARMACIE") pharmaIndexes.push(i);
@@ -961,7 +1007,6 @@ export function postProcess(data) {
     const groups = new Map();
     for (const i of pharmaIndexes) {
       const a = actes[i];
-      // Trouver un représentant clé : on compare via sameName, pas d'équivalence exacte
       let gKey = null;
       for (const [k] of groups) {
         const [kName, kDate] = k.split("|||");
@@ -975,13 +1020,53 @@ export function postProcess(data) {
       groups.get(gKey).push(i);
     }
 
-    // Fusionner les groupes de taille > 1
+    // Fusionner les groupes de taille > 1 (avec conditions de non-fusion E2)
     const indexesToRemove = new Set();
     for (const [, idxs] of groups) {
       if (idxs.length < 2) continue;
-      const keep = actes[idxs[0]];
+
+      // E2 — Vérifier les conditions de non-fusion pour chaque paire
+      const fusionnable = [];
+      const nonFusionnable = [];
       for (let k = 1; k < idxs.length; k++) {
-        const donor = actes[idxs[k]];
+        const a = actes[idxs[0]], b = actes[idxs[k]];
+        const prescA = a.medecin_prescripteur || "";
+        const prescB = b.medecin_prescripteur || "";
+        const cnamA = a.code_cnam_pharmacien || "";
+        const cnamB = b.code_cnam_pharmacien || "";
+        const aIll = isIllisible(a), bIll = isIllisible(b);
+
+        let raison = null;
+        if (prescA && prescB && !sameName(prescA, prescB)) {
+          raison = `prescripteurs différents (${prescA} / ${prescB})`;
+        } else if (cnamA && cnamB && cnamA !== cnamB) {
+          raison = `code_cnam_pharmacien différents (${cnamA} / ${cnamB})`;
+        } else if ((aIll && !bIll) || (!aIll && bIll)) {
+          raison = `un ticket lisible, l'autre illisible — tickets physiquement distincts`;
+        }
+
+        if (raison) {
+          nonFusionnable.push({ idx: idxs[k], raison });
+        } else {
+          fusionnable.push(idxs[k]);
+        }
+      }
+
+      // Avertir les non-fusionnés
+      for (const nf of nonFusionnable) {
+        warn.push(
+          `2 actes PHARMACIE ${actes[idxs[0]].pharmacie || "?"} ${actes[idxs[0]].date || ""} non fusionnés : ${nf.raison} — fusion à confirmer par le gestionnaire`,
+        );
+      }
+
+      // Fusionner les fusionnables
+      if (fusionnable.length === 0) continue;
+      const keep = actes[idxs[0]];
+      let nbIllisibles = isIllisible(keep) ? 1 : 0;
+      let sommeMontantsLisibles = num(keep.montant);
+
+      for (const donorIdx of fusionnable) {
+        const donor = actes[donorIdx];
         // Fusionner details_lignes avec dédoublonnage
         if (Array.isArray(donor.details_lignes)) {
           const existingKeys = new Set();
@@ -1004,28 +1089,44 @@ export function postProcess(data) {
             }
           }
         }
-        // Montant : si l'un est illisible, garder "[ILLISIBLE]"
-        const keepM = num(keep.montant);
-        const donorM = num(donor.montant);
-        const keepIllisible = keepM === 0 && String(keep.montant || "").includes("ILLISIBLE");
-        const donorIllisible = donorM === 0 && String(donor.montant || "").includes("ILLISIBLE");
-        if (keepIllisible || donorIllisible) {
-          keep.montant = "[ILLISIBLE]";
-          const somme = (keep.details_lignes || []).reduce((s, l) => s + num(l.total_ligne), 0);
-          if (somme > 0) keep.montant_lignes_calcule = fmt(somme);
+        // E1 — Montant : additionner les lisibles, signaler les illisibles
+        if (isIllisible(donor)) {
+          nbIllisibles++;
         } else {
-          keep.montant = fmt(keepM + donorM);
+          sommeMontantsLisibles += num(donor.montant);
         }
         // Observations et confiance
         if (donor.observations) addObs(keep, donor.observations);
         if (donor.confiance === "faible" || (donor.confiance === "moyenne" && keep.confiance !== "faible")) {
           keep.confiance = donor.confiance;
         }
-        indexesToRemove.add(idxs[k]);
+        indexesToRemove.add(donorIdx);
       }
-      warn.push(
-        `${idxs.length - 1} acte(s) PHARMACIE fusionné(s) : ${keep.pharmacie || "?"} ${keep.date || ""}`,
-      );
+
+      // Résoudre le montant final (E1)
+      const tousIllisibles = nbIllisibles > 0 && sommeMontantsLisibles === 0;
+      const sommeLignes = (keep.details_lignes || []).reduce((s, l) => s + num(l.total_ligne), 0);
+      if (tousIllisibles) {
+        keep.montant = "[ILLISIBLE]";
+        if (sommeLignes > 0) keep.montant_lignes_calcule = fmt(sommeLignes);
+      } else {
+        keep.montant = fmt(sommeMontantsLisibles);
+        if (nbIllisibles > 0) {
+          keep.montant_partiel = true;
+          if (sommeLignes > 0) keep.montant_lignes_calcule = fmt(sommeLignes);
+          addObs(keep, `montant partiel — ${nbIllisibles} ticket(s) fusionné(s) au total illisible, somme des lignes = ${fmt(sommeLignes)}`);
+        }
+      }
+
+      // BONUS — nombre_lignes_ticket recalculé après fusion
+      if (Array.isArray(keep.details_lignes)) {
+        keep.nombre_lignes_ticket = String(keep.details_lignes.length);
+      }
+
+      const label = nbIllisibles > 0
+        ? `fusion PHARMACIE ${keep.pharmacie || "?"} ${keep.date || ""} : montant retenu ${keep.montant} (dont ${nbIllisibles} ticket(s) au total illisible)`
+        : `${fusionnable.length} acte(s) PHARMACIE fusionné(s) : ${keep.pharmacie || "?"} ${keep.date || ""}`;
+      warn.push(label);
     }
 
     if (indexesToRemove.size > 0) {
@@ -1034,7 +1135,6 @@ export function postProcess(data) {
       let newIdx = 0;
       for (let i = 0; i < actes.length; i++) {
         if (indexesToRemove.has(i)) {
-          // Trouver l'index conservé de ce groupe
           for (const [, idxs] of groups) {
             if (idxs.includes(i)) {
               oldToNew.set(i, oldToNew.get(idxs[0]) ?? idxs[0]);
@@ -1046,14 +1146,12 @@ export function postProcess(data) {
           newIdx++;
         }
       }
-      // Résoudre les renvois : l'index conservé a aussi été remappé
       for (const [old, mapped] of oldToNew) {
         if (indexesToRemove.has(old) && oldToNew.has(mapped) && !indexesToRemove.has(mapped)) {
           oldToNew.set(old, oldToNew.get(mapped));
         }
       }
 
-      // Remapper rattachement_hospitalisation sur les actes restants
       for (let i = 0; i < actes.length; i++) {
         if (indexesToRemove.has(i)) continue;
         const a = actes[i];
@@ -1061,20 +1159,17 @@ export function postProcess(data) {
           a.rattachement_hospitalisation = oldToNew.get(a.rattachement_hospitalisation);
         }
       }
-      // Remapper rattachement_acte des pièces justificatives
       for (const p of data.pieces_justificatives || []) {
         if (p.rattachement_acte != null && oldToNew.has(p.rattachement_acte)) {
           p.rattachement_acte = oldToNew.get(p.rattachement_acte);
         }
       }
 
-      // Supprimer les actes fusionnés (du dernier au premier pour préserver les index)
       const sorted = [...indexesToRemove].sort((a, b) => b - a);
       for (const i of sorted) {
         actes.splice(i, 1);
       }
 
-      // Recalculer les totaux pharmacie après fusion
       const pharmaVillePost = actes
         .filter((a) => a.type === "PHARMACIE")
         .reduce((s, a) => s + num(a.montant), 0);
