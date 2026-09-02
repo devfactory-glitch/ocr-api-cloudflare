@@ -48,10 +48,33 @@ H. PLUSIEURS BULLETINS DANS LE MÊME LOT (RÈGLE CRITIQUE) :
      justificatives (factures, notes d'honoraires, ordonnances, décisions CNAM).
    → "assureur_detecte" = le logo du BS RETENU. JAMAIS celui d'un formulaire vierge
      présent dans le lot.
+   → ISOLATION STRICTE DE L'IDENTITÉ (RÈGLE CRITIQUE) :
+     L'identité complète (nom_prenom, numero_adherent, numero_contrat, numero_cnam,
+     employeur, beneficiaire_coche, adresse) provient ENTIÈREMENT et EXCLUSIVEMENT
+     du BS RETENU. Il est INTERDIT de compléter un champ manquant depuis un bulletin
+     écarté : un BS vierge ou d'un autre assureur appartient à un AUTRE adhérent,
+     son identité n'a aucun rapport avec le dossier.
+     Un champ absent du BS retenu vaut "" ou est repris d'une pièce imprimée
+     (facture, décision CNAM, relevé) du MÊME dossier.
+     CLARIFICATION : l'isolation vise les BULLETINS ÉCARTÉS, pas les pièces du
+     dossier retenu. Un RELEVÉ D'ASSUREUR, une DÉCISION CNAM ou une FACTURE
+     appartenant au dossier sont des sources d'identité LÉGITIMES et PRIORITAIRES
+     (cf. règle 1b). En particulier :
+       - "Matricule Adhérent" et "Contrat N°" d'un relevé d'assureur alimentent
+         numero_adherent et numero_contrat ;
+       - le "Matricule CNAM" du BS alimente numero_cnam et JAMAIS numero_adherent.
+   → TEST DE COHÉRENCE OBLIGATOIRE :
+     nom_prenom doit être compatible avec le nom du malade et avec les noms figurant
+     sur les factures, notes d'honoraires et décisions CNAM. Si nom_prenom n'apparaît
+     sur AUCUNE autre pièce du dossier, c'est une CONTAMINATION : reprendre l'identité
+     depuis les pièces imprimées et consigner l'erreur dans controles.anomalies :
+     "Contamination identité détectée : BS retenu porte <nom_BS>, pièces portent <nom_pièces>".
    → Un BS est VIERGE si aucun champ manuscrit/tamponné n'est rempli dans les sections
      professionnelles ET que l'identité adhérent est vide.
    → Signaler chaque bulletin écarté dans observations_globales :
      "BS vierge ignoré (assureur X, page N)" ou "BS d'un autre adhérent ignoré (nom Y)".
+   → Si au moins un bulletin est écarté, controles.documents_ignores ne peut PAS être
+     vide — y lister chaque document ignoré avec son assureur et sa raison.
    → NE JAMAIS fusionner l'identité d'un BS avec les actes d'un autre BS.
 
 🔍 PRIORITÉ DES SOURCES (pour les MONTANTS et NOMS) : 1) Facture imprimée → 2) Ticket informatique → 3) Cachet officiel → 4) Manuscrit.
@@ -150,6 +173,9 @@ H. PLUSIEURS BULLETINS DANS LE MÊME LOT (RÈGLE CRITIQUE) :
    Exemple : BS manuscrit "Emma" + facture/relevé/décision "EMNA" → retenir "Emna".
    IDEM pour numero_cnam, numero_adherent, numero_contrat, employeur : si le BS
    manuscrit et une source imprimée divergent, l'IMPRIMÉ gagne toujours.
+   IDEM pour infos_patient.nom_prenom_malade : la même priorité imprimé > manuscrit
+   s'applique. Exemple : BS manuscrit "Emma" + facture/relevé/décision "EMNA"
+   → retenir "Emna" et consigner dans controles.anomalies.
 2. Nom/MF praticiens → Cachets/Tampons à l'encre.
 3. Ne PAS mélanger MEDECIN (C, V) et RADIOLOGIE (Écho, Scanner, IRM).
 3a. CONSULTATION ≠ ACTE TECHNIQUE — DISTINCTION PAR LA SECTION DU BS :
@@ -363,6 +389,9 @@ endoscopie sous AG, geste sous anesthésie), l'équipe attendue est :
                                              role_intervention "Chirurgien"
   2) ANESTHÉSISTE                         -> acte promu MEDECIN, lettre_cle "K",
                                              role_intervention "Anesthésiste"
+     CHAMP "acte" de l'anesthésiste = "Anesthésie pour <motif intervention>"
+     (ex: "Anesthésie pour Accouchement par césarienne", "Anesthésie pour Appendicectomie").
+     JAMAIS le geste chirurgical lui-même — l'anesthésiste pratique l'ANESTHÉSIE, pas la chirurgie.
   3) AIDE OPÉRATOIRE                      -> acte promu MEDECIN, lettre_cle "K",
                                              role_intervention "Aide opératoire"
   4) INSTRUMENTISTE / PANSEUR (si présent)-> acte promu MEDECIN, lettre_cle "K",
@@ -626,6 +655,23 @@ observations_globales — sans l'appliquer aux montants ni supprimer de lignes.
        "Pédiatre"                                → Pédiatre
      Le TOTAL manuscrit en bas de la note = montant de l'acte. Extraire aussi
      numero_note et le MF du cachet.
+     LECTURE DU TOTAL MANUSCRIT — MÉTHODE OBLIGATOIRE :
+       a) Compter les CHIFFRES avant de les lire (le nombre de chiffres est plus
+          fiable que leur forme).
+       b) Lire le PREMIER chiffre en dernier : c'est le plus souvent mal interprété.
+          Le "1" manuscrit tunisien est un trait vertical parfois surmonté d'un
+          empattement qui le fait confondre avec "2" ou "7". Un "2" a une boucle
+          ou un angle net en bas.
+       c) Contrôle de plausibilité par rôle (bornes indicatives en DT) :
+            chirurgien 400–1500 | anesthésiste 150–400 | aide opératoire 100–300 |
+            instrumentiste 50–200 | panseur 50–200
+          L'aide opératoire est TOUJOURS inférieur au chirurgien.
+          Si le montant lu contredit ces ordres → RELIRE le premier chiffre.
+          Si après relecture le montant reste hors borne, le CONSERVER tel quel
+          et le signaler dans observations. Ne JAMAIS corriger un montant.
+       d) Un total manuscrit sans aucune confirmation par une autre pièce reçoit
+          OBLIGATOIREMENT confiance "moyenne", jamais "haute", avec l'observation
+          "montant manuscrit non recoupé — à vérifier".
      ⚠️ NOTE D'HONORAIRES vs LIGNE "COMPTE D'AUTRUI" du MÊME praticien avec des
      montants DIFFÉRENTS : ce n'est PAS forcément un doublon. Ce sont souvent
      deux parts (part facturée par la clinique + part réglée en direct).
@@ -666,6 +712,10 @@ observations_globales — sans l'appliquer aux montants ni supprimer de lignes.
    Si le nom du malade est IDENTIQUE au nom de l'adhérent → beneficiaire_coche = "Adhérent",
    même si une case semble cochée par erreur. Une décision CNAM mentionnant
    "Qualité : Assuré lui même" confirme "Adhérent".
+   ARBITRAGE PAR LA DÉCISION CNAM : si une décision de prise en charge porte
+   "Qualité : Assuré lui même", alors beneficiaire_coche = "Adhérent" et
+   patient_concerne = "adherent" pour TOUS les actes du séjour, quelle que soit
+   la case cochée sur le BS — la décision CNAM est imprimée et fait foi.
 15. LETTRES-CLÉS CNAM : C=consultation généraliste | CS=spécialiste | V=visite | KC=chirurgie | KE=exploration | K=technique | Z=radiations ionisantes | B=biologie | Rd=radiologie diagnostique | D=dentaire | P=anatomopath | SC/SF=sage-femme | AMO/AMI/AMS=infirmier | TO/TM/APR=kiné
 16. DÉSIGNATIONS EXACTES : lire CHAQUE LIGNE de la facture. NE JAMAIS utiliser de termes génériques. Détailler analyses biologiques dans details_lignes. Si plusieurs prestations → details_lignes. Montant global sans détail → PAS de details_lignes.
 17. PHARMACIE : 1 acte = 1 ticket/1 pharmacie/1 date. Toutes lignes dans details_lignes. Fusionner doublons même pharmacie+date.
@@ -736,6 +786,8 @@ observations_globales — sans l'appliquer aux montants ni supprimer de lignes.
        facture/BS > nomenclature. Si elles diffèrent, GARDER celle du document et
        ajouter une note INFORMATIVE ("cotation facturée 100, nomenclature 80").
        Ce n'est PAS une anomalie : la cotation dépend de la convention appliquée.
+       JAMAIS copier designation/acte/specialite/praticien depuis matched_nomenclature
+       vers les champs d'affichage — ces champs viennent des DOCUMENTS, pas de la base.
    C13. BS ↔ FACTURE : le "Montant des frais" de la case établissement du BS doit
        correspondre soit au total de la facture, soit au reste à charge patient
        clinique. Indiquer explicitement à laquelle des deux il correspond.
@@ -1206,7 +1258,7 @@ Retourne UNIQUEMENT ce JSON :
                     }
                   ],
                   "lignes_ajustement_ignorees": "Nombre de lignes AJUSTEMENT volontairement écartées, et leur somme (pour traçabilité)",
-                  "total_clinique_ht": "Total HT des frais clinique",
+                  "total_clinique_ht": "Total de la colonne Tot. HT du récapitulatif clinique. NE PAS confondre avec le total de la colonne P.E.C (qui va dans total_pec_organisme)",
                   "total_clinique_tva": "Total TVA des frais clinique",
                   "total_clinique_ttc": "Total TTC des frais clinique",
                   "compte_autrui": [
