@@ -129,6 +129,14 @@ const honorairesHorsFactureActe = (a, ca) =>
 // ─────────────────────────────────────────────────────────────────────────────
 // Classification de secours
 // ─────────────────────────────────────────────────────────────────────────────
+function rubriqueParType(acte) {
+  const t = String(acte.type || "").toUpperCase();
+  if (t === "RADIOLOGIE") return "Z";
+  if (t === "LABORATOIRE") return "B";
+  if (t === "PHARMACIE") return "PH";
+  return "";
+}
+
 function rubriqueParRole(role) {
   const r = norm(role);
   if (r.includes("anesth")) return "FAN";
@@ -769,7 +777,7 @@ export function postProcess(data) {
     for (const a of actes) {
       if (a.rattachement_hospitalisation !== idx) continue;
       a.intervention_id ||= id;
-      a.rubrique_proposee ||= rubriqueParRole(a.role_intervention);
+      a.rubrique_proposee ||= rubriqueParType(a) || rubriqueParRole(a.role_intervention);
       cout += num(a.montant);
     }
     h.cout_total_intervention = fmt(cout);
@@ -865,76 +873,229 @@ export function postProcess(data) {
     }
   }
 
-  // ═══ VERROU 12 — Bloc KC de l'intervention (vue groupée) ═══════════════════
-  {
-    const rel = data.releve_assureur;
-    const releveByRub = {};
-    if (rel && Array.isArray(rel.lignes)) {
-      for (const l of rel.lignes) {
-        const r = String(l.rubrique || "").toUpperCase();
-        releveByRub[r] = (releveByRub[r] || 0) + num(l.remboursement);
+  // Constantes spécialité (utilisées par pré-passe visite + VERROU 13)
+  const MOTS_SPECIALITE = [
+    "anesth", "gyneco", "obstetri", "pediatr", "chirurg", "radiolog",
+    "cardiolog", "biolog", "dentis", "ophtalm", "dermat", "uro",
+    "orthop", "gastro", "neuro", "pneumo", "endocrin", "reanima",
+    "medecin", "generaliste", "interniste", "orl",
+  ];
+
+  // ═══ Pré-passe : visite → rubrique VS/V (doit tourner AVANT VERROU 12/15) ══
+  for (const a of actes) {
+    if (normCompare(a.acte || "").includes("visite")) {
+      const specNorm = normCompare(a.specialite || "");
+      const isSpec = specNorm && MOTS_SPECIALITE.some(m => specNorm.includes(m));
+      const cible = isSpec ? "VS" : "V";
+      if (a.lettre_cle && a.lettre_cle !== cible && ["CS", "C", "V", "VS"].includes(a.lettre_cle)) {
+        a.lettre_cle = cible;
+      }
+      if (a.rubrique_proposee && ["CS", "C"].includes(a.rubrique_proposee)) {
+        a.rubrique_proposee = cible;
       }
     }
+  }
+
+  // ═══ Pré-passe F4 : rubrique_proposee "AUTRE" → rubrique selon le type ═════
+  for (const a of actes) {
+    if (a.rubrique_proposee === "AUTRE" || !a.rubrique_proposee) {
+      const rub = rubriqueParType(a);
+      if (rub) a.rubrique_proposee = rub;
+    }
+  }
+
+  // ═══ VERROU 15 — Cohérence accouchement forfait vs césarienne (KC) ═════════
+  for (const { a: h, i: idx } of hospis) {
+    const motifNorm = normCompare(h.motif || "");
+    const voie = normCompare(h.voie_accouchement || "");
+    const estAccouchement = motifNorm.includes("accouchement") || voie !== "";
+    if (!estAccouchement) continue;
+
+    const estCesarienne = voie.includes("cesarienne") ||
+      (motifNorm.includes("cesarienne") && voie !== "voie_basse");
+
+    if (estCesarienne) {
+      // Césarienne → KC obligatoire
+      if (!h.lettre_cle || h.lettre_cle !== "KC") {
+        const ancien = h.lettre_cle || "(vide)";
+        h.lettre_cle = "KC";
+        warn.push(`Accouchement par césarienne : lettre_cle corrigée ${ancien} → KC`);
+      }
+      if (h.forfait === true || h.forfait === "true") {
+        h.forfait = false;
+        warn.push(`Césarienne : forfait corrigé true → false (acte chirurgical, pas forfait)`);
+      }
+    } else {
+      // Voie basse / forfait → PAS de KC
+      if (h.lettre_cle === "KC") {
+        h.lettre_cle = "";
+        h.cotation = "";
+        h.code_acte = "";
+        warn.push(`Accouchement voie basse : lettre_cle KC retirée (forfait, pas acte chirurgical)`);
+      }
+      if (h.forfait !== true && h.forfait !== "true") {
+        h.forfait = true;
+        warn.push(`Accouchement voie basse : forfait corrigé → true`);
+      }
+      h.vue_recommandee = "groupee";
+      // Retirer KC/cotation des chirurgiens rattachés (faux positifs)
+      for (const a of actes) {
+        if (a.rattachement_hospitalisation !== idx) continue;
+        if (a.lettre_cle === "KC") {
+          a.lettre_cle = "";
+          a.cotation = "";
+          addObs(a, "lettre_cle KC retirée : accouchement voie basse (forfait)");
+        }
+      }
+    }
+  }
+
+  // ═══ VERROU 12 — Défalcation facture par rubrique ═══════════════════════════
+  {
+    const RUBRIQUES_KC = ["K", "FAN", "SO"];
+    const rel = data.releve_assureur;
+    const hasReleve = rel && Array.isArray(rel.lignes);
+
+    // Relevé assureur indexé par rubrique
+    const releveDepByRub = {};
+    if (hasReleve) {
+      for (const l of rel.lignes) {
+        const r = String(l.rubrique || "").toUpperCase();
+        if (!releveDepByRub[r]) releveDepByRub[r] = { depenses: 0, remboursement: 0 };
+        releveDepByRub[r].depenses += num(l.depenses);
+        releveDepByRub[r].remboursement += num(l.remboursement);
+      }
+    }
+
     for (const { a: h, i: idx } of hospis) {
       const rattaches = actes.filter((a) => a.rattachement_hospitalisation === idx);
-      const hasRole = rattaches.some((a) => a.role_intervention);
-      if (!h.code_acte && !hasRole) continue;
+      const estKC = !(h.forfait === true || h.forfait === "true") &&
+        (h.code_acte || rattaches.some((a) => a.role_intervention));
 
-      const postes = [];
-      // Lignes bloc_operatoire
-      for (const ligne of h.bloc_operatoire?.lignes || []) {
-        postes.push({
-          role: "Établissement",
-          praticien: h.clinique || "",
-          rubrique_proposee: ligne.rubrique_proposee || "SO",
-          montant: ligne.montant || "",
-          montant_pec: ligne.montant_pec || "",
-          montant_assureur: "",
-        });
-      }
-      // Actes promus
-      let totalHon = 0;
-      let totalPecActes = 0;
-      for (const a of rattaches) {
-        const rub = a.rubrique_proposee || "";
-        postes.push({
-          role: a.role_intervention || a.type,
-          praticien: a.praticien || "",
-          rubrique_proposee: rub,
-          montant: a.montant || "",
-          montant_pec: a.montant_pec || "",
-          montant_assureur: "",
-        });
-        if (rub === "K" || rub === "FAN") totalHon += num(a.montant);
-        totalPecActes += num(a.montant_cnam || a.montant_pec);
-      }
-      const totalEtab = num(h.bloc_operatoire?.total);
-      const totalPecBloc = (h.bloc_operatoire?.lignes || []).reduce(
-        (s, l) => s + num(l.montant_pec), 0,
-      );
-      const totalKcBrut = totalHon + totalEtab;
-      const totalPecCnam = totalPecBloc + totalPecActes;
-      const hasReleve = rel && Array.isArray(rel.lignes);
-      const totalAssureur = hasReleve
-        ? (releveByRub["K"] || 0) + (releveByRub["FAN"] || 0) + (releveByRub["SO"] || 0)
-        : 0;
-
-      h.bloc_kc = {
-        code_acte: h.code_acte || "",
-        lettre_cle: h.lettre_cle || "",
-        cotation: h.cotation || "",
-        postes,
-        total_honoraires: fmt(totalHon),
-        total_etablissement: fmt(totalEtab),
-        total_kc_brut: fmt(totalKcBrut),
-        total_pec_cnam: fmt(totalPecCnam),
-        total_assureur: hasReleve ? fmt(totalAssureur) : "",
-        reste_a_charge_bloc: hasReleve
-          ? fmt(totalKcBrut - totalPecCnam - totalAssureur)
-          : fmt(totalKcBrut - totalPecCnam),
-        exclusif_avec: ["actes_independants", "bloc_operatoire"],
-        note: "Vue groupée. Chaque poste conserve son montant individuel dans actes_independants pour une liquidation séparée.",
+      // Collecter TOUTES les lignes de la facture par rubrique
+      const rubTotals = {};
+      const addRub = (rub, montant, pec) => {
+        const r = rub || "AUTRE";
+        if (!rubTotals[r]) rubTotals[r] = { depenses: 0, pec_cnam: 0, lignes: [] };
+        rubTotals[r].depenses += num(montant);
+        rubTotals[r].pec_cnam += num(pec);
       };
+
+      // 1. Séjour → JHC + correction nombre_nuitees depuis quantité chambre
+      let nuiteesFact = 0;
+      for (const ligne of h.sejour?.lignes || []) {
+        addRub(ligne.rubrique_proposee || "JHC", ligne.montant, ligne.montant_pec);
+        const prest = normCompare(ligne.prestation || "");
+        if (prest.includes("chambre") || prest.includes("nuitee") || prest.includes("lit")) {
+          nuiteesFact += num(ligne.quantite);
+        }
+      }
+      if (nuiteesFact > 0 && num(h.nombre_nuitees) !== nuiteesFact) {
+        const ancien = h.nombre_nuitees || "(vide)";
+        h.nombre_nuitees = String(nuiteesFact);
+        warn.push(`nombre_nuitees corrigé : ${ancien} → ${nuiteesFact} (quantité chambre facturée)`);
+      }
+      // 2. Bloc opératoire → SO
+      for (const ligne of h.bloc_operatoire?.lignes || []) {
+        addRub(ligne.rubrique_proposee || "SO", ligne.montant, ligne.montant_pec);
+      }
+      // 3. Pharmacie interne → PH
+      for (const ligne of h.pharmacie_interne?.lignes || []) {
+        addRub(ligne.rubrique_proposee || "PH", ligne.montant, ligne.montant_pec);
+      }
+      // 4. Autres frais
+      for (const ligne of h.autres_frais?.lignes || []) {
+        addRub(ligne.rubrique_proposee || "AUTRE", ligne.montant, ligne.montant_pec);
+      }
+      // 5. Actes rattachés (compte d'autrui promus)
+      const postesKc = [];
+      for (const a of rattaches) {
+        const rub = a.rubrique_proposee || "AUTRE";
+        addRub(rub, a.montant, a.montant_cnam || a.montant_pec);
+        if (estKC && RUBRIQUES_KC.includes(rub)) {
+          postesKc.push({
+            role: a.role_intervention || a.type,
+            praticien: a.praticien || "",
+            rubrique_proposee: rub,
+            montant: a.montant || "",
+            montant_pec: a.montant_cnam || a.montant_pec || "",
+          });
+        }
+      }
+
+      // Construire la défalcation complète
+      const defalcation = [];
+      const allRubs = [...new Set([...Object.keys(rubTotals), ...Object.keys(releveDepByRub)])];
+      for (const r of allRubs) {
+        const dep = rubTotals[r]?.depenses || 0;
+        const pec = rubTotals[r]?.pec_cnam || 0;
+        const assRemb = releveDepByRub[r]?.remboursement || 0;
+        defalcation.push({
+          rubrique: r,
+          dans_bloc_kc: RUBRIQUES_KC.includes(r),
+          depenses: fmt(dep),
+          pec_cnam: fmt(pec),
+          remboursement_assureur: hasReleve ? fmt(assRemb) : "",
+          reste_a_charge: hasReleve ? fmt(dep - pec - assRemb) : fmt(dep - pec),
+        });
+      }
+
+      // Totaux par catégorie
+      let totalFacture = 0, totalPec = 0, totalAssureur = 0;
+      let totalKc = 0, totalPecKc = 0, totalAssureurKc = 0;
+      for (const d of defalcation) {
+        const dep = num(d.depenses), pec = num(d.pec_cnam), ass = num(d.remboursement_assureur);
+        totalFacture += dep; totalPec += pec; totalAssureur += ass;
+        if (d.dans_bloc_kc) { totalKc += dep; totalPecKc += pec; totalAssureurKc += ass; }
+      }
+
+      // Timbre fiscal
+      const timbre = num(h.recapitulatif_facture?.timbre_fiscal);
+
+      // Postes KC : ajouter les lignes bloc_operatoire
+      if (estKC) {
+        for (const ligne of h.bloc_operatoire?.lignes || []) {
+          postesKc.unshift({
+            role: "Établissement",
+            praticien: h.clinique || "",
+            rubrique_proposee: ligne.rubrique_proposee || "SO",
+            montant: ligne.montant || "",
+            montant_pec: ligne.montant_pec || "",
+          });
+        }
+      }
+
+      // F5 — type_sejour : ambulatoire (0 nuitées) vs hospitalisation
+      const nuitees = num(h.nombre_nuitees);
+      const typeSejour = nuitees > 0 ? "hospitalisation" : "ambulatoire";
+
+      h.defalcation_facture = {
+        type_sejour: typeSejour,
+        nombre_nuitees: h.nombre_nuitees || "0",
+        defalcation,
+        total_facture: fmt(totalFacture + timbre),
+        total_pec_cnam: fmt(totalPec),
+        total_assureur: hasReleve ? fmt(totalAssureur) : "",
+        timbre_fiscal: timbre > 0 ? fmt(timbre) : "",
+        ecart_ajustements: h.ecart_ajustements || "",
+      };
+
+      // Bloc KC uniquement si acte chirurgical (pas forfait)
+      if (estKC) {
+        h.bloc_kc = {
+          code_acte: h.code_acte || "",
+          lettre_cle: h.lettre_cle || "",
+          cotation: h.cotation || "",
+          postes: postesKc,
+          total_kc_brut: fmt(totalKc),
+          total_pec_cnam: fmt(totalPecKc),
+          total_assureur: hasReleve ? fmt(totalAssureurKc) : "",
+          reste_a_charge_bloc: hasReleve
+            ? fmt(totalKc - totalPecKc - totalAssureurKc)
+            : fmt(totalKc - totalPecKc),
+          exclusif_avec: ["actes_independants", "bloc_operatoire"],
+        };
+      }
     }
   }
 
@@ -1333,12 +1494,6 @@ export function postProcess(data) {
   }
 
   // ═══ VERROU 13 — Protection nomenclature + cohérence rôle ═════════════════
-  const MOTS_SPECIALITE = [
-    "anesth", "gyneco", "obstetri", "pediatr", "chirurg", "radiolog",
-    "cardiolog", "biolog", "dentis", "ophtalm", "dermat", "uro",
-    "orthop", "gastro", "neuro", "pneumo", "endocrin", "reanima",
-    "medecin", "generaliste", "interniste", "orl",
-  ];
   const ABREV_SPECIALITE = {
     GYN: "Gynécologue", GYNECOLOGUE: "Gynécologue", GYNECO: "Gynécologue",
     PED: "Pédiatre", PEDIATRE: "Pédiatre",
@@ -1431,6 +1586,24 @@ export function postProcess(data) {
           a.acte = `Anesthésie pour ${motif}`;
           addObs(a, "acte corrigé : l'anesthésiste pratique l'anesthésie, pas le geste chirurgical");
         }
+      }
+    }
+
+    // 13e — lettre_cle : consultation vs visite (le modèle confond souvent)
+    // CS = consultation spécialiste (au cabinet), VS = visite spécialiste (déplacement)
+    // C = consultation généraliste, V = visite généraliste
+    if (normCompare(a.acte || "").includes("visite")) {
+      const specNorm = normCompare(a.specialite || "");
+      const isSpec = specNorm && MOTS_SPECIALITE.some(m => specNorm.includes(m));
+      const cible = isSpec ? "VS" : "V";
+      if (a.lettre_cle && a.lettre_cle !== cible && ["CS", "C", "V", "VS"].includes(a.lettre_cle)) {
+        const ancien = a.lettre_cle;
+        a.lettre_cle = cible;
+        addObs(a, `lettre_cle corrigée : ${ancien} → ${cible} (acte = visite)`);
+      }
+      // rubrique_proposee doit suivre la lettre_cle (CS → VS ou C → V)
+      if (a.rubrique_proposee && ["CS", "C"].includes(a.rubrique_proposee)) {
+        a.rubrique_proposee = cible;
       }
     }
 
