@@ -127,6 +127,11 @@ const honorairesHorsFactureActe = (a, ca) =>
   analyseHonoraires(a, ca).horsFacture;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Constantes domaine
+// ─────────────────────────────────────────────────────────────────────────────
+const RUBRIQUES_KC = ["K", "FAN", "SO"];
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Classification de secours
 // ─────────────────────────────────────────────────────────────────────────────
 function rubriqueParType(acte) {
@@ -786,8 +791,12 @@ export function postProcess(data) {
   });
 
   // ═══ VERROU 5 — Anti double comptage sur les totaux ════════════════════════
-  const sommeType = (t) =>
-    actes.filter((a) => a.type === t).reduce((s, a) => s + num(a.montant), 0);
+  const totauxParType = {};
+  for (const a of actes) {
+    const t = a.type || "";
+    totauxParType[t] = (totauxParType[t] || 0) + num(a.montant);
+  }
+  const sommeType = (t) => totauxParType[t] || 0;
 
   const totalHospi = hospis.reduce(
     (s, { a: h }) =>
@@ -881,8 +890,9 @@ export function postProcess(data) {
     "medecin", "generaliste", "interniste", "orl",
   ];
 
-  // ═══ Pré-passe : visite → rubrique VS/V (doit tourner AVANT VERROU 12/15) ══
+  // ═══ Pré-passe : normalisation rubriques (doit tourner AVANT VERROU 12/15) ══
   for (const a of actes) {
+    // Visite → rubrique VS/V
     if (normCompare(a.acte || "").includes("visite")) {
       const specNorm = normCompare(a.specialite || "");
       const isSpec = specNorm && MOTS_SPECIALITE.some(m => specNorm.includes(m));
@@ -894,10 +904,7 @@ export function postProcess(data) {
         a.rubrique_proposee = cible;
       }
     }
-  }
-
-  // ═══ Pré-passe F4 : rubrique_proposee "AUTRE" → rubrique selon le type ═════
-  for (const a of actes) {
+    // Rubrique "AUTRE" → rubrique selon le type (RADIOLOGIE→Z, LABORATOIRE→B, PHARMACIE→PH)
     if (a.rubrique_proposee === "AUTRE" || !a.rubrique_proposee) {
       const rub = rubriqueParType(a);
       if (rub) a.rubrique_proposee = rub;
@@ -952,7 +959,6 @@ export function postProcess(data) {
 
   // ═══ VERROU 12 — Défalcation facture par rubrique ═══════════════════════════
   {
-    const RUBRIQUES_KC = ["K", "FAN", "SO"];
     const rel = data.releve_assureur;
     const hasReleve = rel && Array.isArray(rel.lignes);
 
@@ -1586,24 +1592,6 @@ export function postProcess(data) {
           a.acte = `Anesthésie pour ${motif}`;
           addObs(a, "acte corrigé : l'anesthésiste pratique l'anesthésie, pas le geste chirurgical");
         }
-      }
-    }
-
-    // 13e — lettre_cle : consultation vs visite (le modèle confond souvent)
-    // CS = consultation spécialiste (au cabinet), VS = visite spécialiste (déplacement)
-    // C = consultation généraliste, V = visite généraliste
-    if (normCompare(a.acte || "").includes("visite")) {
-      const specNorm = normCompare(a.specialite || "");
-      const isSpec = specNorm && MOTS_SPECIALITE.some(m => specNorm.includes(m));
-      const cible = isSpec ? "VS" : "V";
-      if (a.lettre_cle && a.lettre_cle !== cible && ["CS", "C", "V", "VS"].includes(a.lettre_cle)) {
-        const ancien = a.lettre_cle;
-        a.lettre_cle = cible;
-        addObs(a, `lettre_cle corrigée : ${ancien} → ${cible} (acte = visite)`);
-      }
-      // rubrique_proposee doit suivre la lettre_cle (CS → VS ou C → V)
-      if (a.rubrique_proposee && ["CS", "C"].includes(a.rubrique_proposee)) {
-        a.rubrique_proposee = cible;
       }
     }
 

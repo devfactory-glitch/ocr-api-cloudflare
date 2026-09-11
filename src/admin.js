@@ -1,5 +1,5 @@
 // src/admin.js
-// Plateforme d'administration de l'API OCR BH Assurance
+// Plateforme d'administration de l'API OCR Assurance Maladie
 // Tableau de bord + Configuration des providers OCR
 
 import { Hono } from "hono";
@@ -593,7 +593,7 @@ function buildDashboardHTML() {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Administration — OCR BH Assurance</title>
+  <title>Administration — OCR Assurance Maladie</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
@@ -884,6 +884,7 @@ function buildDashboardHTML() {
       border-color: var(--accent);
       box-shadow: 0 0 0 2px rgba(0,229,255,0.1);
     }
+    select option { background: var(--surface); color: var(--text); }
     textarea { resize: vertical; min-height: 80px; }
     .toggle-wrap { display: flex; align-items: center; gap: 0.75rem; }
     .toggle {
@@ -1003,7 +1004,7 @@ function buildDashboardHTML() {
 
   <!-- Topbar -->
   <header class="topbar">
-    <div class="topbar-logo">OCR <span>BH Assurance</span></div>
+    <div class="topbar-logo">OCR <span>Assurance Maladie</span></div>
     <span class="topbar-badge">ADMIN</span>
     <div class="topbar-right">
       <div class="status-dot"></div>
