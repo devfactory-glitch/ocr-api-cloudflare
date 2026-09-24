@@ -141,6 +141,14 @@ async function enrichWithNomenclature(db, data) {
     };
   }
 
+  // Observation sans doublon (même logique que postprocess.js addObs)
+  function addObs(obj, txt) {
+    if (!obj || !txt) return;
+    const cur = String(obj.observations || "");
+    if (cur.includes(txt)) return;
+    obj.observations = [cur, txt].filter(Boolean).join(" | ");
+  }
+
   for (const acte of data.actes_independants) {
     if (!typesEligibles.includes(acte.type)) continue;
 
@@ -161,6 +169,7 @@ async function enrichWithNomenclature(db, data) {
 
     // Lookup pour chaque code trouvé dans details_lignes
     let enrichedFromDetails = false;
+    const codesNonTrouves = [];
     for (const { ligne, code } of codesFromDetails) {
       try {
         const row = await db.prepare(QUERY).bind(code).first();
@@ -169,6 +178,8 @@ async function enrichWithNomenclature(db, data) {
           if (!acte.lettre_cle && row.lettre_cle) acte.lettre_cle = row.lettre_cle;
           if (!acte.cotation && row.cotation) acte.cotation = String(row.cotation);
           enrichedFromDetails = true;
+        } else {
+          codesNonTrouves.push(code);
         }
       } catch (e) { console.error("nomenclature lookup error:", e.message); }
     }
@@ -192,8 +203,15 @@ async function enrichWithNomenclature(db, data) {
           if (!acte.lettre_cle && row.lettre_cle) acte.lettre_cle = row.lettre_cle;
           if (!acte.cotation && row.cotation) acte.cotation = String(row.cotation);
           acte.matched_nomenclature = match;
+        } else {
+          codesNonTrouves.push(codeIntervention);
         }
       } catch (e) { console.error("nomenclature intervention lookup error:", e.message); }
+    }
+
+    // Signaler les codes non trouvés (alerte pour correction humaine + few-shot)
+    if (codesNonTrouves.length > 0) {
+      addObs(acte, `code CNAM non trouvé dans la nomenclature : ${codesNonTrouves.join(", ")} — à vérifier`);
     }
   }
 

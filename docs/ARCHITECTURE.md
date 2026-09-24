@@ -274,7 +274,24 @@ Pour chaque acte (MEDECIN, RADIOLOGIE, LABORATOIRE, HOSPITALISATION) :
   2. Si match → enrichir la ligne avec matched_nomenclature
   3. Si aucun match dans details_lignes → tenter accord_prealable_details.code_intervention
   4. Remonter lettre_cle et cotation au niveau de l'acte si absents
+  5. Si un code au format CNAM n'est pas trouve → observation d'alerte sur l'acte
 ```
+
+### Alerte codes non trouves
+
+Quand un code respecte le pattern CNAM (`[A-Z]{2,3}\d{6,}`) mais n'existe pas dans la table `nomenclature_cnam`, une observation est ajoutee sur l'acte :
+
+```
+"observations": "code CNAM non trouvé dans la nomenclature : ROD300050 — à vérifier"
+```
+
+Cela permet :
+- **Detection visible** — le front affiche l'alerte, l'admin voit immediatement le probleme
+- **Correction humaine** — l'admin corrige le code (ex: `ROD300050` → `RAD0300010`)
+- **Few-shot** — la correction alimente Gemini pour les analyses futures
+- **Mesure qualite** — suivi du nombre de codes non trouves au fil du temps
+
+> Aucune correction automatique (fuzzy match) n'est appliquee : un seul chiffre de difference dans un code CNAM peut designer un acte completement different. Le systeme signale, l'humain tranche.
 
 ---
 
@@ -467,6 +484,7 @@ Les migrations sont automatiques : `initDB()` cree les tables et ajoute les colo
 
 | Version | Description |
 |---------|-------------|
+| v4.2.0 | Alerte codes CNAM non trouves dans la nomenclature (observation sur l'acte) |
 | v4.1.0 | Equipe chirurgicale, accouchement, ventilation PEC, controles C12-C16 |
 | v4.0 | Identite imprimee, rubriques CNAM, nomenclature, few-shot learning |
 | v3.0 | Post-traitement deterministe, 15 verrous, fusion pharmacie |
