@@ -24,7 +24,7 @@ Documentation technique detaillee du systeme OCR pour les dossiers medicaux d'as
 Le systeme est concu comme un pipeline en couches :
 
 ```
-[Images] --> [Few-shot] --> [Gemini OCR] --> [enrichActesFromContext] --> [enrichWithNomenclature] --> [postProcess] --> [JSON final]
+[Images] --> [Few-shot] --> [Gemini OCR] --> [enrichActesFromContext] --> [enrichWithNomenclature] --> [enrichFromReferentiel] --> [postProcess] --> [JSON final]
                                  ^
                            systemInstruction
                            (prompt.js ~1500 lignes)
@@ -43,8 +43,10 @@ Point d'entree principal. Contient :
 | Fonction | Lignes | Description |
 |----------|:------:|-------------|
 | `initDB()` | 21-109 | Creation des tables D1 + migrations auto |
-| `enrichWithNomenclature()` | 126-201 | Enrichissement par codes CNAM depuis D1 |
-| `enrichActesFromContext()` | 211-299 | Croisement actes promus / pieces justificatives |
+| `enrichWithNomenclature()` | 126-234 | Enrichissement par codes CNAM depuis D1 |
+| `enrichFromReferentiel()` | 241-318 | Correction identite adherent depuis le referentiel D1 |
+| `upsertReferentielAdherent()` | 323-353 | Alimentation auto du referentiel apres validation |
+| `enrichActesFromContext()` | 358-446 | Croisement actes promus / pieces justificatives |
 | `fileToBase64()` | 315-325 | Conversion fichier -> base64 par chunks 8KB |
 | `getFewShotExamples()` | 330-381 | Selection de 3 exemples diversifies depuis D1 |
 | `callGeminiStream()` | 392-441 | Appel streaming Gemini avec timeout sur 1er chunk |
@@ -145,12 +147,13 @@ Pro (180s) --echec--> Flash 3.5 (45s) --echec--> Flash 3.7 (45s) --echec--> Erre
 
 Le streaming est utilise : timeout uniquement sur le 1er chunk, puis pas de timeout pour le reste.
 
-### Etape 5 : Post-traitement en 3 couches
+### Etape 5 : Post-traitement en 4 couches
 
 ```js
-data = enrichActesFromContext(data);       // Croisement contexte
-data = await enrichWithNomenclature(env.DB, data); // Nomenclature CNAM
-data = postProcess(data);                  // 15 verrous deterministes
+data = enrichActesFromContext(data);                // Croisement contexte
+data = await enrichWithNomenclature(env.DB, data);  // Nomenclature CNAM
+data = await enrichFromReferentiel(env.DB, data);   // Referentiel adherents
+data = postProcess(data);                           // 15 verrous deterministes
 ```
 
 ---
@@ -253,6 +256,54 @@ Les exemples sont injectes comme un historique de conversation **texte uniquemen
 [model] "{...}"
 [user] <images du vrai BS>  ← requete reelle
 ```
+
+---
+
+## Referentiel adherents
+
+### Principe
+
+Le referentiel est une table D1 qui stocke les identites verifiees des adherents. Il corrige automatiquement les erreurs OCR sur les noms et numeros deja connus.
+
+```
+Gemini extrait : numero_adherent "1099", nom "Ben Aaoun Mohamad"
+Referentiel    : numero_adherent "1099" → nom "Ben Aoun Mohamed", CNAM "0833"
+→ Correction automatique + observation de tracabilite
+```
+
+### Match par numero adherent (exact)
+
+Le match se fait **exclusivement par `numero_adherent`** (+ `assureur`), jamais par nom. Le nom est la donnee a corriger, pas la cle de recherche. Cela evite les faux positifs (homonymes).
+
+### Champs corriges
+
+| Champ | Comportement |
+|-------|-------------|
+| `nom_prenom` | Corrige si different, ancien conserve dans `nom_prenom_avant_referentiel` |
+| `numero_cnam` | Corrige si different, ancien conserve dans `numero_cnam_avant_referentiel` |
+| `numero_contrat` | Corrige si different, ancien conserve dans `numero_contrat_avant_referentiel` |
+| `employeur` | Corrige si different, ancien conserve dans `employeur_avant_referentiel` |
+
+Les champs vides sont completes sans observation "avant".
+
+### Tracabilite
+
+Chaque correction ajoute :
+- `referentiel_applique: true` sur `infos_adherent`
+- Une observation globale detaillant les champs corriges
+
+### Alimentation automatique
+
+Le referentiel est alimente **automatiquement** depuis :
+- `POST /valider` et `/valider-bulletin` (statut `valide` ou `corrige`)
+- `PUT /admin/bulletins/:id/corriger`
+- `PUT /admin/bulletins/:id/valider`
+
+Upsert par cle `(numero_adherent, assureur)`. La derniere correction gagne (`updated_at`).
+
+### Isolation tenant
+
+Chaque tenant a sa propre base D1, donc son propre referentiel. Les adherents d'un tenant ne sont pas visibles par un autre.
 
 ---
 
@@ -484,6 +535,7 @@ Les migrations sont automatiques : `initDB()` cree les tables et ajoute les colo
 
 | Version | Description |
 |---------|-------------|
+| v4.3.0 | Referentiel adherents — correction auto identite depuis les bulletins valides |
 | v4.2.0 | Alerte codes CNAM non trouves dans la nomenclature (observation sur l'acte) |
 | v4.1.0 | Equipe chirurgicale, accouchement, ventilation PEC, controles C12-C16 |
 | v4.0 | Identite imprimee, rubriques CNAM, nomenclature, few-shot learning |

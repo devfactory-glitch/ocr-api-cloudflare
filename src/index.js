@@ -83,6 +83,21 @@ async function initDB(db) {
       db.prepare(
         `CREATE INDEX IF NOT EXISTS idx_nomenclature_code ON nomenclature_cnam(code) WHERE deleted_at IS NULL`,
       ),
+      db.prepare(`CREATE TABLE IF NOT EXISTS referentiel_adherents (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        numero_adherent   TEXT    NOT NULL,
+        nom_prenom        TEXT,
+        numero_cnam       TEXT,
+        numero_contrat    TEXT,
+        employeur         TEXT,
+        assureur          TEXT,
+        created_at        DATETIME DEFAULT (datetime('now')),
+        updated_at        DATETIME DEFAULT (datetime('now')),
+        UNIQUE(numero_adherent, assureur)
+      )`),
+      db.prepare(
+        `CREATE INDEX IF NOT EXISTS idx_ref_adherent ON referentiel_adherents(numero_adherent)`,
+      ),
     ]);
     // Migrations : ajouter les nouvelles colonnes sur tables existantes (ignore si déjà présentes)
     const migrations = [
@@ -216,6 +231,115 @@ async function enrichWithNomenclature(db, data) {
   }
 
   return data;
+}
+
+// ─────────────────────────────────────────────
+// ENRICHISSEMENT REFERENTIEL ADHERENTS (post-OCR)
+// Compare l'identité extraite par Gemini avec le référentiel D1.
+// Match par numero_adherent (exact). Corrige nom, CNAM, contrat si différent.
+// ─────────────────────────────────────────────
+async function enrichFromReferentiel(db, data) {
+  if (!db || !data?.infos_adherent) return data;
+
+  const adherent = data.infos_adherent;
+  const numAdherent = (adherent.numero_adherent || "").replace(/\s/g, "").trim();
+  const assureur = adherent.assureur_detecte || adherent.assureur || "";
+  if (!numAdherent) return data;
+
+  // Normalisation pour comparaison insensible à la casse/accents/espaces
+  const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+  try {
+    const ref = await db.prepare(
+      `SELECT nom_prenom, numero_cnam, numero_contrat, employeur
+       FROM referentiel_adherents
+       WHERE numero_adherent = ? AND assureur = ?
+       ORDER BY updated_at DESC LIMIT 1`
+    ).bind(numAdherent, assureur).first();
+
+    if (!ref) return data;
+
+    const corrections = [];
+
+    // Corriger un champ : seulement si le référentiel a autant ou plus de mots et diffère réellement
+    const countWords = (s) => String(s || "").trim().split(/\s+/).filter(Boolean).length;
+
+    function corrigerChamp(champ) {
+      const valRef = (ref[champ] || "").trim();
+      const valOcr = (adherent[champ] || "").trim();
+      if (!valRef) return;                          // référentiel vide → rien
+      if (!valOcr) {                                // OCR vide → compléter
+        adherent[champ] = valRef;
+        corrections.push(`${champ} complété depuis le référentiel`);
+        return;
+      }
+      if (norm(valRef) === norm(valOcr)) return;    // identiques (casse/espaces ignorés) → rien
+      if (countWords(valRef) < countWords(valOcr)) return; // OCR a plus de mots → plus complet → on garde
+      adherent[champ + "_avant_referentiel"] = valOcr;
+      adherent[champ] = valRef;
+      corrections.push(`${champ} : "${valOcr}" → "${valRef}"`);
+    }
+
+    corrigerChamp("nom_prenom");
+    corrigerChamp("numero_cnam");
+    corrigerChamp("numero_contrat");
+    corrigerChamp("employeur");
+
+    if (corrections.length > 0) {
+      adherent.referentiel_applique = true;
+      const obs = `référentiel adhérent (n°${numAdherent}) : ${corrections.join(", ")}`;
+      const cur = String(data.observations || "");
+      if (!cur.includes(obs)) {
+        data.observations = [cur, obs].filter(Boolean).join(" | ");
+      }
+    }
+  } catch (e) {
+    console.error("referentiel lookup error:", e.message);
+  }
+
+  return data;
+}
+
+// ─────────────────────────────────────────────
+// ALIMENTATION REFERENTIEL ADHERENTS
+// Appelée après validation/correction d'un bulletin.
+// Upsert basé sur (numero_adherent, assureur).
+// ─────────────────────────────────────────────
+async function upsertReferentielAdherent(db, data) {
+  if (!db || !data?.infos_adherent) return;
+
+  const a = data.infos_adherent;
+  const numAdherent = (a.numero_adherent || "").replace(/\s/g, "").trim();
+  if (!numAdherent) return;
+
+  const nomPrenom = a.nom_prenom || "";
+  const numeroCnam = a.numero_cnam || "";
+  const numeroContrat = a.numero_contrat || "";
+  const employeur = a.employeur || "";
+  const assureur = a.assureur_detecte || a.assureur || "";
+
+  try {
+    const existing = await db.prepare(
+      "SELECT id FROM referentiel_adherents WHERE numero_adherent = ? AND assureur = ?"
+    ).bind(numAdherent, assureur).first();
+
+    if (existing) {
+      await db.prepare(
+        `UPDATE referentiel_adherents
+         SET nom_prenom = ?, numero_cnam = ?, numero_contrat = ?, employeur = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`
+      ).bind(nomPrenom, numeroCnam, numeroContrat, employeur, existing.id).run();
+    } else {
+      await db.prepare(
+        `INSERT INTO referentiel_adherents
+         (numero_adherent, nom_prenom, numero_cnam, numero_contrat, employeur, assureur)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(numAdherent, nomPrenom, numeroCnam, numeroContrat, employeur, assureur).run();
+    }
+  } catch (e) {
+    console.error("referentiel upsert error:", e.message);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -700,6 +824,8 @@ async function analyseSingleDossier(env, files, fewShotExamples) {
     data = enrichActesFromContext(data);
     // Post-traitement 2 : enrichir avec nomenclature CNAM (DB)
     if (env.DB) data = await enrichWithNomenclature(env.DB, data);
+    // Post-traitement 3 : corriger l'identité depuis le référentiel adhérents (DB)
+    if (env.DB) data = await enrichFromReferentiel(env.DB, data);
     data = postProcess(data);
   }
 
@@ -935,6 +1061,15 @@ app.post("/valider", async (c) => {
       )
       .run();
 
+    // Alimenter le référentiel adhérents depuis les données validées/corrigées
+    if (['valide', 'corrige'].includes(statut_validation)) {
+      try {
+        const refSource = donnees_corrigees || donnees_ia;
+        const refParsed = typeof refSource === 'string' ? JSON.parse(refSource) : refSource;
+        await upsertReferentielAdherent(c.env.DB, refParsed);
+      } catch { /* alimentation optionnelle */ }
+    }
+
     return c.json({
       success: true,
       message: "Feedback ok",
@@ -987,6 +1122,15 @@ app.post("/valider-bulletin", async (c) => {
         commentaires_correction || "",
       )
       .run();
+
+    // Alimenter le référentiel adhérents depuis les données validées/corrigées
+    if (['valide', 'corrige'].includes(statut_validation)) {
+      try {
+        const refSource = donnees_corrigees || donnees_ia;
+        const refParsed = typeof refSource === 'string' ? JSON.parse(refSource) : refSource;
+        await upsertReferentielAdherent(c.env.DB, refParsed);
+      } catch { /* alimentation optionnelle */ }
+    }
 
     return c.json({
       success: true,

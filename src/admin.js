@@ -8,6 +8,31 @@ import { getGlobalStats, getRecentLogs } from "./stats.js";
 const admin = new Hono();
 
 // ─────────────────────────────────────────────
+// Alimentation référentiel adhérents après validation/correction
+// ─────────────────────────────────────────────
+async function upsertReferentielAdherent(db, data) {
+  if (!db || !data?.infos_adherent) return;
+  const a = data.infos_adherent;
+  const numAdherent = (a.numero_adherent || "").replace(/\s/g, "").trim();
+  if (!numAdherent) return;
+  const assureur = a.assureur_detecte || a.assureur || "";
+  try {
+    const existing = await db.prepare(
+      "SELECT id FROM referentiel_adherents WHERE numero_adherent = ? AND assureur = ?"
+    ).bind(numAdherent, assureur).first();
+    if (existing) {
+      await db.prepare(
+        `UPDATE referentiel_adherents SET nom_prenom = ?, numero_cnam = ?, numero_contrat = ?, employeur = ?, updated_at = datetime('now') WHERE id = ?`
+      ).bind(a.nom_prenom || "", a.numero_cnam || "", a.numero_contrat || "", a.employeur || "", existing.id).run();
+    } else {
+      await db.prepare(
+        `INSERT INTO referentiel_adherents (numero_adherent, nom_prenom, numero_cnam, numero_contrat, employeur, assureur) VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(numAdherent, a.nom_prenom || "", a.numero_cnam || "", a.numero_contrat || "", a.employeur || "", assureur).run();
+    }
+  } catch (e) { console.error("referentiel upsert error:", e.message); }
+}
+
+// ─────────────────────────────────────────────
 // Middleware : protection basique par clé admin
 // ─────────────────────────────────────────────
 admin.use("/*", async (c, next) => {
@@ -440,6 +465,12 @@ admin.put("/bulletins/:id/corriger", async (c) => {
       id
     ).run();
 
+    // Alimenter le référentiel adhérents
+    try {
+      const refParsed = JSON.parse(donneesCorrigees);
+      await upsertReferentielAdherent(c.env.DB, refParsed);
+    } catch { /* alimentation optionnelle */ }
+
     return c.json({ success: true, message: `Bulletin #${id} corrigé.`, assureur, types_actes: typesActes });
   } catch (err) {
     return c.json({ success: false, erreur: err.message }, 500);
@@ -481,6 +512,12 @@ admin.put("/bulletins/:id/valider", async (c) => {
            updated_at = datetime('now')
        WHERE id = ?`
     ).bind(assureur, JSON.stringify(typesActes), id).run();
+
+    // Alimenter le référentiel adhérents
+    try {
+      const refParsed = JSON.parse(bulletin.donnees_ia);
+      await upsertReferentielAdherent(c.env.DB, refParsed);
+    } catch { /* alimentation optionnelle */ }
 
     return c.json({ success: true, message: `Bulletin #${id} validé tel quel.`, assureur, types_actes: typesActes });
   } catch (err) {
