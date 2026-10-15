@@ -19,14 +19,13 @@ Le moteur antifraude Dhamen (projet principal E-Sante) applique 60 regles de det
 | S9 | Signature suspecte | 4-Critique | Detecter la presence/absence de signature |
 | S10 | Ajout manuscrit suspect | 3-Eleve | Detecter des zones manuscrites ajoutees apres impression |
 | S11 | Document falsifie | 4-Critique | Detecter des zones avec polices/resolutions incoherentes |
-| S58 | Documents clones | 4-Critique | Hash visuel (dHash) pour comparaison inter-bulletins |
+| S58 | Documents clones | 4-Critique | Delegue a Dhamen (pHash necessaire, impossible sur Cloudflare Workers) |
 
 ## Perimetre OCR (ce qu'on fait)
 
-1. Enrichir le prompt Gemini pour extraire `document_integrity` dans le JSON
-2. Parser le resultat et l'inclure dans la reponse OCR
-3. Calculer un hash visuel (dHash) par image uploadee
-4. Stocker `visual_hash` en base pour comparaison future (S58)
+1. Enrichir le prompt Gemini pour extraire `document_integrity` dans le JSON (S8-S11)
+2. Normaliser les types (toBool, toConfidence) en post-traitement
+3. Inclure `document_integrity` dans la reponse OCR pour que Dhamen le consomme
 
 ## Hors perimetre OCR (ce que fait Dhamen)
 
@@ -58,8 +57,7 @@ Le moteur antifraude Dhamen (projet principal E-Sante) applique 60 regles de det
       "suspected": false,
       "suspicious_zones": [],
       "confidence": 0.85
-    },
-    "visual_hash": "a1b2c3d4e5f6..."
+    }
   }
 }
 ```
@@ -70,27 +68,25 @@ Le moteur antifraude Dhamen (projet principal E-Sante) applique 60 regles de det
 - **Fire-and-forget** : si l'analyse echoue, l'extraction OCR reste intacte
 - **Pas de second appel Gemini** : integre dans le prompt existant (un seul appel)
 - **Runtime** : Cloudflare Workers (pas de librairie native image)
-- **dHash** : calcule en pur JS sur les octets bruts de l'image
-
 ## Architecture
 
 ```
-[Gemini OCR] ──→ JSON avec document_integrity
+[Gemini OCR] ──→ JSON avec document_integrity (S8-S11)
                           ↓
               [postProcess] ── extraction inchangee
                           ↓
-              [computeVisualHash()] ── dHash pur JS
+              [enrichDocumentIntegrity()] ── normalisation types
                           ↓
-              [Reponse finale] ── document_integrity + visual_hash
+              [Reponse finale] ── document_integrity pret pour Dhamen
 ```
 
 ## Fichiers modifies
 
 | Fichier | Modification |
 |---------|-------------|
-| `src/document-integrity.js` | Nouveau — dHash + enrichissement |
+| `src/document-integrity.js` | Nouveau — normalisation document_integrity |
 | `src/prompt.js` | Ajout section document_integrity dans le schema JSON |
-| `src/index.js` | Import + appel post-OCR (fire-and-forget) + migration visual_hash |
+| `src/index.js` | Import + appel post-OCR (fire-and-forget) |
 | `docs/REQ-DOCUMENT-INTEGRITY.md` | Ce document |
 | `docs/ARCHITECTURE.md` | Mise a jour pipeline + section integrite |
 
@@ -98,4 +94,5 @@ Le moteur antifraude Dhamen (projet principal E-Sante) applique 60 regles de det
 
 - L'analyse d'integrite ne doit JAMAIS bloquer l'extraction OCR
 - Si Gemini ne retourne pas `document_integrity`, le champ est absent (pas d'erreur)
-- Le dHash doit etre deterministe (meme image = meme hash)
+- toBool("false") doit retourner false (pas true comme Boolean("false"))
+- Confidence 85 doit etre normalisee en 0.85

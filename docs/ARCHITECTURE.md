@@ -154,7 +154,7 @@ data = enrichActesFromContext(data);                // Croisement contexte
 data = await enrichWithNomenclature(env.DB, data);  // Nomenclature CNAM
 data = await enrichFromReferentiel(env.DB, data);   // Referentiel adherents
 data = postProcess(data);                           // 15 verrous deterministes
-data = enrichDocumentIntegrity(data, imageParts);   // Integrite documentaire (antifraude)
+data = enrichDocumentIntegrity(data);                // Integrite documentaire (antifraude)
 ```
 
 ---
@@ -320,18 +320,14 @@ Module isole (`src/document-integrity.js`) — zero impact sur l'extraction OCR.
 | S9 | Signature suspecte | `signature_analysis.detected`, `confidence` |
 | S10 | Ajout manuscrit | `manuscript_addition.detected`, `zones[]`, `confidence` |
 | S11 | Document falsifie | `forgery_analysis.suspected`, `suspicious_zones[]`, `confidence` |
-| S58 | Documents clones | `visual_hash` (dHash 16 hex chars) |
+| S58 | Documents clones | Delegue a Dhamen (pHash necessaire, impossible sur Workers) |
 
 ### Architecture
 
 - S8-S11 : extraits par Gemini dans le champ `document_integrity` du JSON
-- S58 : `computeVisualHash()` calcule un dHash en pur JS sur les octets bruts de l'image principale
+- `enrichDocumentIntegrity()` normalise les types (toBool, toConfidence) en post-traitement
 - Fire-and-forget : si l'analyse echoue, l'extraction OCR reste intacte
 - Le moteur antifraude Dhamen consomme `document_integrity` pour creer les alertes
-
-### Champ visual_hash
-
-Stocke dans `bulletins_valides.visual_hash` pour comparaison inter-bulletins (S58). Le moteur Dhamen compare les hashes via distance de Hamming.
 
 ---
 
@@ -563,7 +559,7 @@ Les migrations sont automatiques : `initDB()` cree les tables et ajoute les colo
 
 | Version | Description |
 |---------|-------------|
-| v4.4.0 | Integrite documentaire — analyse antifraude visuelle (S8-S11, S58) + dHash |
+| v4.4.0 | Integrite documentaire — analyse antifraude visuelle (S8-S11) |
 | v4.3.0 | Referentiel adherents — correction auto identite depuis les bulletins valides |
 | v4.2.0 | Alerte codes CNAM non trouves dans la nomenclature (observation sur l'acte) |
 | v4.1.0 | Equipe chirurgicale, accouchement, ventilation PEC, controles C12-C16 |
