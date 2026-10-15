@@ -147,13 +147,14 @@ Pro (180s) --echec--> Flash 3.5 (45s) --echec--> Flash 3.7 (45s) --echec--> Erre
 
 Le streaming est utilise : timeout uniquement sur le 1er chunk, puis pas de timeout pour le reste.
 
-### Etape 5 : Post-traitement en 4 couches
+### Etape 5 : Post-traitement en 5 couches
 
 ```js
 data = enrichActesFromContext(data);                // Croisement contexte
 data = await enrichWithNomenclature(env.DB, data);  // Nomenclature CNAM
 data = await enrichFromReferentiel(env.DB, data);   // Referentiel adherents
 data = postProcess(data);                           // 15 verrous deterministes
+data = enrichDocumentIntegrity(data);                // Integrite documentaire (antifraude)
 ```
 
 ---
@@ -304,6 +305,29 @@ Upsert par cle `(numero_adherent, assureur)`. La derniere correction gagne (`upd
 ### Isolation tenant
 
 Chaque tenant a sa propre base D1, donc son propre referentiel. Les adherents d'un tenant ne sont pas visibles par un autre.
+
+---
+
+## Integrite documentaire (Antifraude)
+
+Module isole (`src/document-integrity.js`) — zero impact sur l'extraction OCR.
+
+### Scenarios CdCF couverts
+
+| # | Scenario | Donnee extraite |
+|---|----------|----------------|
+| S8 | Cachet suspect | `stamp_analysis.detected`, `text_on_stamp`, `confidence` |
+| S9 | Signature suspecte | `signature_analysis.detected`, `confidence` |
+| S10 | Ajout manuscrit | `manuscript_addition.detected`, `zones[]`, `confidence` |
+| S11 | Document falsifie | `forgery_analysis.suspected`, `suspicious_zones[]`, `confidence` |
+| S58 | Documents clones | Delegue a Dhamen (pHash necessaire, impossible sur Workers) |
+
+### Architecture
+
+- S8-S11 : extraits par Gemini dans le champ `document_integrity` du JSON
+- `enrichDocumentIntegrity()` normalise les types (toBool, toConfidence) en post-traitement
+- Fire-and-forget : si l'analyse echoue, l'extraction OCR reste intacte
+- Le moteur antifraude Dhamen consomme `document_integrity` pour creer les alertes
 
 ---
 
@@ -535,6 +559,7 @@ Les migrations sont automatiques : `initDB()` cree les tables et ajoute les colo
 
 | Version | Description |
 |---------|-------------|
+| v4.4.0 | Integrite documentaire — analyse antifraude visuelle (S8-S11) |
 | v4.3.0 | Referentiel adherents — correction auto identite depuis les bulletins valides |
 | v4.2.0 | Alerte codes CNAM non trouves dans la nomenclature (observation sur l'acte) |
 | v4.1.0 | Equipe chirurgicale, accouchement, ventilation PEC, controles C12-C16 |
