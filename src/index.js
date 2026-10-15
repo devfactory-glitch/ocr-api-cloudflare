@@ -9,6 +9,7 @@ import admin from "./admin.js"; // À supposer existant dans votre dossier
 import { logUsageEvent } from "./stats.js"; // À supposer existant dans votre dossier
 import { PROMPT, PROMPT_DOSSIER } from "./prompt.js";
 import { postProcess } from "./postprocess.js";
+import { enrichDocumentIntegrity } from "./document-integrity.js";
 
 const app = new Hono();
 app.use("/*", cors());
@@ -107,6 +108,7 @@ async function initDB(db) {
       `ALTER TABLE bulletins_valides ADD COLUMN est_exemple_fewshot INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE bulletins_valides ADD COLUMN updated_at DATETIME`,
       `ALTER TABLE usage_logs ADD COLUMN fewshot_count INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE bulletins_valides ADD COLUMN visual_hash TEXT`,
     ];
     for (const sql of migrations) {
       try { await db.prepare(sql).run(); } catch { /* colonne existe déjà */ }
@@ -827,6 +829,8 @@ async function analyseSingleDossier(env, files, fewShotExamples) {
     // Post-traitement 3 : corriger l'identité depuis le référentiel adhérents (DB)
     if (env.DB) data = await enrichFromReferentiel(env.DB, data);
     data = postProcess(data);
+    // Post-traitement 4 : intégrité documentaire (antifraude S8-S11, S58) — fire-and-forget
+    try { data = enrichDocumentIntegrity(data, imageParts); } catch { /* jamais bloquer l'OCR */ }
   }
 
   return { data, parseOk, text, modelUsed: result.modelUsed };

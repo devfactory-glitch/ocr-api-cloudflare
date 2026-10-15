@@ -1338,6 +1338,27 @@ Retourne UNIQUEMENT ce JSON :
             "notes_cotation": ["C12 — écarts informatifs entre cotation facturée et cotation de la nomenclature"],
             "anomalies": ["Toute autre anomalie détectée"]
           },
+          "document_integrity": {
+            "stamp_analysis": {
+              "detected": "true si au moins un cachet de prestataire est visible sur le BS ou les pièces, false sinon",
+              "text_on_stamp": "Texte COMPLET lu sur le cachet principal (nom, spécialité, MF, adresse). '' si illisible.",
+              "confidence": "0.0 à 1.0 — confiance dans la lecture du cachet"
+            },
+            "signature_analysis": {
+              "detected": "true si une signature manuscrite (trait, griffonnage, paraphe) est visible, false sinon",
+              "confidence": "0.0 à 1.0 — confiance dans la détection"
+            },
+            "manuscript_addition": {
+              "detected": "true si des montants, actes ou textes semblent ajoutés MANUELLEMENT après impression (encre différente, style différent du reste du document imprimé), false sinon",
+              "zones": [{"description": "Description de chaque zone suspecte (ex: montant 150 DT ajouté à la main en marge)"}],
+              "confidence": "0.0 à 1.0"
+            },
+            "forgery_analysis": {
+              "suspected": "true si des zones du document présentent des caractéristiques graphiques incohérentes (police différente, résolution différente, bords de copier-coller visibles, texte superposé), false sinon",
+              "suspicious_zones": [{"description": "Description de la zone suspecte", "severity": "low | medium | high"}],
+              "confidence": "0.0 à 1.0"
+            }
+          },
           "observations_globales": "Synthèse en texte libre des points d'attention pour le gestionnaire (plafonds atteints signalés par un relevé, montants à confirmer, illisibilités bloquantes, présence d'un nouveau-né, postes non remboursables comme l'accompagnant...)"
         }
 
