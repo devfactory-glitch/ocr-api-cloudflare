@@ -40,7 +40,30 @@ export function enrichDocumentIntegrity(data) {
     }
   }
 
+  // S58 bis : clone_key structurelle (déterministe, basée sur les données extraites)
+  data.clone_key = buildCloneKey(data.actes_independants);
+
   return data;
+}
+
+// Génère une clé de clone déterministe à partir des actes extraits.
+// Deux BS avec les mêmes actes/prestataires/montants/dates produisent la même clé.
+// Les champs d'identité (nom, matricule) sont exclus volontairement.
+function buildCloneKey(actes) {
+  if (!Array.isArray(actes) || actes.length === 0) return null;
+
+  const parts = actes.map(a => {
+    const type = (a.type || "").toUpperCase().trim();
+    const date = (a.date || "").trim();
+    const praticien = (a.praticien || "").toUpperCase().trim();
+    const montant = (a.montant || "").trim();
+    const code = (a.code_acte || "").toUpperCase().trim();
+    return `${type}|${date}|${praticien}|${montant}|${code}`;
+  });
+
+  // Tri pour que l'ordre des actes n'affecte pas la clé
+  parts.sort();
+  return parts.join(";;");
 }
 
 // Gemini peut retourner undefined, null, ou un string
