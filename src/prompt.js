@@ -159,23 +159,11 @@ H. PLUSIEURS BULLETINS DANS LE MÊME LOT (RÈGLE CRITIQUE) :
 
 🔴 RÈGLES :
 1. Textes imprimés ÉCRASENT le manuscrit brouillon.
-1b. IDENTITÉ DE L'ADHÉRENT — SOURCE PRIORITAIRE (RÈGLE CRITIQUE) :
-   Le nom, le prénom et les numéros sont repris de la source IMPRIMÉE la plus fiable,
-   dans cet ordre STRICT :
-     1) RELEVÉ D'ASSUREUR (nom en majuscules d'imprimerie)
-     2) DÉCISION DE PRISE EN CHARGE CNAM
-     3) FACTURE CLINIQUE / DÉTAIL DE FACTURE
-     4) ORDONNANCE IMPRIMÉE
-     5) BS manuscrit (dernier recours uniquement)
-   Le manuscrit du BS ne sert QUE si aucune source imprimée ne porte l'information.
-   Si l'orthographe diffère entre manuscrit et imprimé → retenir l'IMPRIMÉ et
-   consigner dans controles.anomalies : "orthographe BS 'X' corrigée en 'Y' (source imprimée)".
-   Exemple : BS manuscrit "Emma" + facture/relevé/décision "EMNA" → retenir "Emna".
-   IDEM pour numero_cnam, numero_adherent, numero_contrat, employeur : si le BS
-   manuscrit et une source imprimée divergent, l'IMPRIMÉ gagne toujours.
-   IDEM pour infos_patient.nom_prenom_malade : la même priorité imprimé > manuscrit
-   s'applique. Exemple : BS manuscrit "Emma" + facture/relevé/décision "EMNA"
-   → retenir "Emna" et consigner dans controles.anomalies.
+1b. IDENTITÉ — PRIORITÉ SOURCE (RÈGLE CRITIQUE) :
+   Ordre STRICT pour TOUS les champs d'identité (nom_prenom, nom_prenom_malade, numero_adherent, numero_contrat, numero_cnam, employeur) :
+     1) RELEVÉ D'ASSUREUR → 2) DÉCISION CNAM → 3) FACTURE → 4) ORDONNANCE IMPRIMÉE → 5) BS manuscrit (dernier recours)
+   Si imprimé ≠ manuscrit → retenir l'IMPRIMÉ, consigner dans controles.anomalies : "orthographe BS 'X' corrigée en 'Y' (source imprimée)".
+   Ex: BS "Emma" + facture "EMNA" → retenir "Emna".
 2. Nom/MF praticiens → Cachets/Tampons à l'encre.
 3. Ne PAS mélanger MEDECIN (C, V) et RADIOLOGIE (Écho, Scanner, IRM).
 3a. CONSULTATION ≠ ACTE TECHNIQUE — DISTINCTION PAR LA SECTION DU BS :
@@ -643,57 +631,22 @@ observations_globales — sans l'appliquer aux montants ni supprimer de lignes.
    LETTRE_CONFIDENTIELLE : extraire INTÉGRALEMENT chirurgien, dates, motif COMPLET (ne JAMAIS tronquer), acte réalisé, codification CNAM.
    PRISE_EN_CHARGE : code_intervention, forfait CNAM, numéro/date décision. Rattacher à l'acte correspondant.
 
-   NOTE_HONORAIRES (NOUVEAU) : formulaire pré-imprimé "Note d'Honoraires N° ...",
-     avec le nom du docteur, le nom du patient, et 3 lignes pré-imprimées :
-       "- Médecin :"  /  "- Chirurgien :"  /  "- Aide opératoire :"
-     La ligne COCHÉE, ENTOURÉE, SOULIGNÉE ou REMPLIE donne le RÔLE du praticien
-     → alimente "role_intervention" de l'acte promu correspondant.
-     Si AUCUNE ligne n'est marquée, déduire le rôle du CACHET :
-       "Médecin Anesthésiste Réanimateur"        → Anesthésiste
-       "Spécialiste en Gynécologie Obstétrique"  → Chirurgien (si intervention)
-       "Chirurgien ..."                          → Chirurgien
-       "Pédiatre"                                → Pédiatre
-     Le TOTAL manuscrit en bas de la note = montant de l'acte. Extraire aussi
-     numero_note et le MF du cachet.
-     LECTURE DU TOTAL MANUSCRIT — MÉTHODE OBLIGATOIRE :
-       a) Compter les CHIFFRES avant de les lire (le nombre de chiffres est plus
-          fiable que leur forme).
-       b) Lire le PREMIER chiffre en dernier : c'est le plus souvent mal interprété.
-          Le "1" manuscrit tunisien est un trait vertical parfois surmonté d'un
-          empattement qui le fait confondre avec "2" ou "7". Un "2" a une boucle
-          ou un angle net en bas.
-       c) Contrôle de plausibilité par rôle (bornes indicatives en DT) :
-            chirurgien 400–1500 | anesthésiste 150–400 | aide opératoire 100–300 |
-            instrumentiste 50–200 | panseur 50–200
-          L'aide opératoire est TOUJOURS inférieur au chirurgien.
-          Si le montant lu contredit ces ordres → RELIRE le premier chiffre.
-          Si après relecture le montant reste hors borne, le CONSERVER tel quel
-          et le signaler dans observations. Ne JAMAIS corriger un montant.
-       d) Un total manuscrit sans aucune confirmation par une autre pièce reçoit
-          OBLIGATOIREMENT confiance "moyenne", jamais "haute", avec l'observation
-          "montant manuscrit non recoupé — à vérifier".
-     ⚠️ NOTE D'HONORAIRES vs LIGNE "COMPTE D'AUTRUI" du MÊME praticien avec des
-     montants DIFFÉRENTS : ce n'est PAS forcément un doublon. Ce sont souvent
-     deux parts (part facturée par la clinique + part réglée en direct).
-     Dans ce cas : créer UN SEUL acte, avec details_lignes contenant les 2 montants
-     et leur source, montant = leur SOMME, et signaler dans observations :
-     "montant à confirmer : note d'honoraires X + ligne facture Y".
-     Si les montants sont IDENTIQUES → c'est un doublon, ne compter qu'une fois.
+   NOTE_HONORAIRES : formulaire "Note d'Honoraires N° ...", 3 lignes pré-imprimées (Médecin/Chirurgien/Aide opératoire).
+     Ligne COCHÉE/ENTOURÉE/SOULIGNÉE → role_intervention. Si aucune marquée, déduire du CACHET :
+       Anesthésiste Réanimateur→Anesthésiste | Gynécologie Obstétrique→Chirurgien | Pédiatre→Pédiatre
+     TOTAL manuscrit = montant. Extraire aussi numero_note et MF du cachet.
+     LECTURE MANUSCRIT : a) Compter les chiffres avant de lire b) "1" tunisien ≈ trait vertical, confondable avec "2"/"7"
+     c) Plausibilité : chirurgien 400–1500 | anesthésiste 150–400 | aide 100–300 | instrumentiste/panseur 50–200.
+        Aide < chirurgien TOUJOURS. Hors borne → relire, puis conserver et signaler. Ne JAMAIS corriger.
+     d) Manuscrit non recoupé → confiance "moyenne", observation "montant manuscrit non recoupé — à vérifier".
+     NOTE vs COMPTE D'AUTRUI même praticien : montants DIFFÉRENTS → 1 acte, details_lignes 2 sources, montant = somme.
+     Montants IDENTIQUES → doublon, compter 1 fois.
 
-   RELEVE_ASSUREUR (NOUVEAU) : "Relevé individuel de remboursement" d'un assureur
-     privé (STAR, CARTE, BH, GAT, Maghrebia...), en-tête "GROUPE MALADIE".
-     Extraire dans le bloc "releve_assureur" : contrat_n, societe, matricule_adherent,
-     nom_adherent, nom_malade, bulletin_n, date_soins, date_emission, bordereau_n,
-     puis chaque ligne (rubrique, libelle, observations, depenses, base_cotation,
-     remboursement), et les totaux (total_depenses, total_remboursement, net_a_regler).
-     ⚠️ INTERDIT ABSOLU : ce relevé ne remplit JAMAIS "montant_cnam" (ce n'est pas
-     la CNAM) et ne modifie JAMAIS "montant" d'un acte. Il sert au CONTRÔLE et à la
-     détection d'écarts uniquement.
-     UTILITÉ ANALYTIQUE : le "bulletin_n" du relevé confirme le numero_bulletin du BS ;
-     les rubriques (FAN=frais anesthésie, JHC=hospitalisation et clinique, K=frais
-     chirurgicaux, PH=pharmacie, SO=salle opération+anesthésie) permettent de vérifier
-     qu'aucun poste n'a été oublié. Les observations "plafond atteint" doivent être
-     recopiées dans observations_globales.
+   RELEVE_ASSUREUR : "Relevé individuel de remboursement" assureur privé (STAR, CARTE, BH, GAT...).
+     Extraire dans bloc "releve_assureur" tous les champs + lignes + totaux.
+     ⚠️ Ne remplit JAMAIS montant_cnam ni montant. CONTRÔLE uniquement.
+     bulletin_n confirme le BS. Rubriques (FAN/JHC/K/PH/SO) vérifient la complétude.
+     Observations "plafond atteint" → recopier dans observations_globales.
 
 10. CROISEMENT ORDONNANCES ↔ PHARMACIE : vérifier cohérence médicaments prescrits vs délivrés. Signaler écarts dans "observations".
     ⚠️ Une ordonnance peut être libellée au nom du NOUVEAU-NÉ ("Bébé de Mme X") alors
@@ -881,61 +834,50 @@ Retourne UNIQUEMENT ce JSON :
               "specialite": "Spécialité lue sur le cachet (ex: Gynécologie Obstétrique, Anesthésie Réanimation, Pédiatrie). '' si non visible.",
               "matricule_fiscale": "...",
               "code_cnam_praticien": "Code CNAM du professionnel de santé (ex: 1/12896/11) — celui du PRATICIEN, jamais du patient",
-              "acte": "Désignation EXACTE (ex: Consultation spécialisée cardiologie, Visite à domicile, Accouchement par césarienne, Anesthésie générale, Aide opératoire)",
-              "role_intervention": "Chirurgien | Anesthésiste | Aide opératoire | Instrumentiste | Panseur | Pédiatre | Autre — OBLIGATOIRE pour tout acte rattaché à une intervention. '' sinon.",
-              "intervention_id": "Identifiant de chaînage partagé par tous les postes de la même intervention (ex: INT-1). '' si l'acte n'est lié à aucune intervention.",
-              "rubrique_proposee": "K | FAN | SO | JHC | PH | CS | AUTRE — classification par nature économique du poste (voir règle 3k). PROPOSITION, jamais une décision de barème.",
-              "rubrique_assureur": "Code de rubrique tel qu'écrit sur le relevé d'assureur, s'il en existe un pour ce poste. '' sinon.",
-              "exclusif_avec": ["Libellés ou identifiants des postes avec lesquels ce montant ne doit PAS être additionné (même dépense sous un autre angle). Tableau vide si aucun."],
+              "acte": "Désignation EXACTE",
+              "role_intervention": "Chirurgien | Anesthésiste | Aide opératoire | Instrumentiste | Panseur | Pédiatre | Autre — OBLIGATOIRE si rattaché à une intervention. '' sinon.",
+              "intervention_id": "Chaînage intervention (ex: INT-1). '' sinon.",
+              "rubrique_proposee": "K | FAN | SO | JHC | PH | CS | AUTRE (voir règle 3k). PROPOSITION uniquement.",
+              "rubrique_assureur": "Code rubrique du relevé assureur. '' sinon.",
+              "exclusif_avec": ["Postes avec lesquels NE PAS additionner (même dépense). [] si aucun."],
               "patient_concerne": "adherent | conjoint | enfant | nouveau_ne",
-              "code_acte": "Code CNAM de l'acte si visible (ex: MJC030040). OBLIGATOIRE sur un acte 'Chirurgien' dès qu'un code d'intervention existe dans le dossier (voir règle CODIFICATION).",
-              "lettre_cle": "KC ou K ou KE ou C ou CS ou V si visible",
-              "cotation": "Nombre après la lettre-clé (ex: 50 pour KC50, 100 pour KC100)",
-              "forfait": "true si l'acte est facturé au forfait conventionnel (accouchement voie basse, etc.), false sinon",
-              "rattachement_hospitalisation": "Index 0-BASED de l'acte HOSPITALISATION dans actes_independants auquel ce prestataire est rattaché (meme convention que rattachement_acte). Remplir UNIQUEMENT pour les prestataires promus depuis une facture clinique ou une note d'honoraires liée au séjour. Si acte indépendant -> ne pas inclure ce champ.",
-              "origine_ligne": "compte_autrui | details_facture | note_honoraires | bulletin — d'où provient cet acte.",
-              "libelle_origine": "Libellé EXACT de la ligne telle qu'écrite sur la facture ou la note (ex: 'AIDE OPERATOIRE', 'GHOZZI Mounir (GYN)'). Présent uniquement sur un acte promu.",
-              "non_percu": "true si la ligne de facture porte 'N.P.' / 'Non Perçu' (honoraires réglés en direct au praticien)",
+              "code_acte": "Code CNAM si visible (ex: MJC030040). OBLIGATOIRE sur 'Chirurgien' si code d'intervention existe.",
+              "lettre_cle": "KC | K | KE | C | CS | V si visible",
+              "cotation": "Nombre après la lettre-clé (ex: 50 pour KC50)",
+              "forfait": "true si forfait conventionnel, false sinon",
+              "rattachement_hospitalisation": "Index 0-BASED de l'HOSPITALISATION. UNIQUEMENT pour actes promus. Ne pas inclure si indépendant.",
+              "origine_ligne": "compte_autrui | details_facture | note_honoraires | bulletin",
+              "libelle_origine": "Libellé EXACT de la ligne source. Uniquement sur acte promu.",
+              "non_percu": "true si 'N.P.' / 'Non Perçu'",
               "details_lignes": [
-                {
-                  "designation": "Désignation EXACTE de chaque prestation sur la facture / source du montant",
-                  "source": "facture_clinique | note_honoraires | bulletin | recu",
-                  "code_acte": "Lettre-clé ou code CNAM de cette ligne si visible (ex: CS, Ke, KC, MJC030040)",
-                  "cotation": "Coefficient de cette ligne",
-                  "montant": "Montant de cette ligne"
-                }
+                {"designation": "...", "source": "facture_clinique | note_honoraires | bulletin | recu", "code_acte": "...", "cotation": "...", "montant": "..."}
               ],
-              "conventionne": "oui | non | '' (si mention 'conventionné' ou 'hors convention' visible sur facture/reçu/BS. Si non visible → '')",
-              "montant_ht": "Montant HT si la facture distingue HT/TTC, sinon ''",
-              "montant": "Montant FACTURÉ TTC — UNIQUEMENT depuis facture/note d'honoraires/reçu/BS. JAMAIS depuis décision CNAM, décompte, ou relevé assureur. Si aucune source → ''.",
-              "montant_pec": "Part P.E.C (organisme) de cette ligne sur la facture clinique, si la colonne existe",
-              "montant_patient": "Part patient de cette ligne sur la facture clinique, si la colonne existe",
-              "montant_cnam": "Montant REMBOURSÉ par CNAM — depuis décompte CNAM ou décision prise en charge chiffrée. JAMAIS depuis facture patient ni relevé assureur privé.",
+              "conventionne": "oui | non | ''",
+              "montant_ht": "Montant HT si HT/TTC distingués, sinon ''",
+              "montant": "Montant FACTURÉ TTC — sources: facture/note d'honoraires/reçu/BS uniquement. '' si aucune.",
+              "montant_pec": "Part P.E.C si colonne existe",
+              "montant_patient": "Part patient si colonne existe",
+              "montant_cnam": "Montant REMBOURSÉ CNAM — décompte > décision chiffrée. JAMAIS depuis facture/relevé.",
               "accord_prealable": false,
               "confiance": "haute | moyenne | faible",
-              "observations": "Anomalies propres à cet acte (montant à confirmer, illisibilité, doublon potentiel...)"
+              "observations": "Anomalies propres à cet acte"
             },
             {
               "type": "RADIOLOGIE",
               "date": "...",
               "centre_radiologie": "Nom du centre ou médecin radiologue",
               "matricule_fiscale": "...",
-              "medecin_prescripteur": "Médecin ayant prescrit la radio",
+              "medecin_prescripteur": "Médecin prescripteur",
               "patient_concerne": "adherent | conjoint | enfant | nouveau_ne",
-              "acte": "Désignation EXACTE (ex: Échographie abdominale, Radio thorax face, Scanner cérébral)",
+              "acte": "Désignation EXACTE",
               "code_acte": "Code CNAM si visible (ex: RAD010260)",
-              "lettre_cle": "Rd ou Z si visible",
-              "cotation": "Nombre après la lettre-clé (ex: 15 pour Rd15)",
+              "lettre_cle": "Rd | Z si visible",
+              "cotation": "Nombre après la lettre-clé",
               "details_lignes": [
-                {
-                  "designation": "Désignation EXACTE de chaque examen (ex: TDM abdominale, Échographie pelvienne)",
-                  "code_acte": "Code CNAM si visible (ex: Z, Rd)",
-                  "cotation": "Coefficient",
-                  "montant": "Montant de cette ligne"
-                }
+                {"designation": "...", "code_acte": "...", "cotation": "...", "montant": "..."}
               ],
-              "montant": "Montant FACTURÉ — UNIQUEMENT depuis facture/reçu/BS. JAMAIS depuis décision CNAM ni décompte. Si pas de facture ni BS → ''.",
-              "montant_cnam": "Montant REMBOURSÉ par CNAM — depuis décompte CNAM ou décision prise en charge. JAMAIS depuis facture.",
+              "montant": "Montant FACTURÉ — sources: facture/reçu/BS uniquement. '' si aucune.",
+              "montant_cnam": "Montant REMBOURSÉ CNAM — décompte > décision. JAMAIS depuis facture/relevé.",
               "accord_prealable": false,
               "confiance": "haute | moyenne | faible",
               "observations": ""
@@ -945,44 +887,31 @@ Retourne UNIQUEMENT ce JSON :
               "date": "...",
               "pharmacie": "...",
               "matricule_fiscale": "...",
-              "code_cnam_pharmacien": "Référence CNAM du pharmacien (ex: 1/25495/81) — JAMAIS dans numero_cnam du patient",
-              "medecin_prescripteur": "Nom du prescripteur si l'ordonnance correspondante est présente",
+              "code_cnam_pharmacien": "Réf. CNAM du pharmacien (ex: 1/25495/81) — JAMAIS dans numero_cnam",
+              "medecin_prescripteur": "Prescripteur si ordonnance présente",
               "patient_concerne": "adherent | conjoint | enfant | nouveau_ne",
               "details_lignes": [
-                {
-                  "medicament": "Nom EXACT du médicament — lire depuis la VIGNETTE collée (priorité) ou depuis la ligne imprimée du ticket. Ex: DOLIPRANE 1000MG, AUGMENTIN 1G, VOLTARENE 75MG",
-                  "code_amm": "Code PCT / Code AMM — lire depuis la COLONNE 'Code PCT' du ticket, sur la MÊME LIGNE que ce médicament. Ne JAMAIS prendre le code d'une autre ligne.",
-                  "forme": "Forme galénique si la colonne existe (GOUTTE, COLLYR, COMPRI, SOL EXT...)",
-                  "quantite": "Quantité achetée (ex: 1, 2, 3). Lire sur la ligne du ticket.",
-                  "prix_unitaire": "Prix unitaire TTC / PUV",
-                  "total_ligne": "Prix total de cette ligne (Mt. Percu, ou quantite × prix_unitaire)"
-                }
+                {"medicament": "Nom EXACT (VIGNETTE priorité)", "code_amm": "Code PCT MÊME LIGNE", "forme": "...", "quantite": "...", "prix_unitaire": "PUV", "total_ligne": "Mt. Percu ou qté×PU"}
               ],
-              "nombre_lignes_ticket": "Nombre de lignes réellement visibles sur le ticket — doit être égal à la taille de details_lignes",
-              "montant": "TOTAL du ticket/facture pharmacie (doit = somme de tous les total_ligne)",
-              "montant_cnam": "Montant REMBOURSÉ par CNAM — depuis décompte CNAM ou décision prise en charge. JAMAIS depuis facture.",
+              "nombre_lignes_ticket": "Nb lignes visibles = taille details_lignes",
+              "montant": "TOTAL du ticket (= somme total_ligne)",
+              "montant_cnam": "Montant REMBOURSÉ CNAM — décompte > décision. JAMAIS depuis facture/relevé.",
               "accord_prealable": false,
               "confiance": "haute | moyenne | faible",
               "observations": ""
             },
-           {
+            {
               "type": "LABORATOIRE",
-              "date": "Date de l'analyse",
+              "date": "...",
               "laboratoire": "Nom complet du labo",
-              "matricule_fiscale": "MF du laboratoire",
+              "matricule_fiscale": "...",
               "medecin_prescripteur": "Nom du médecin",
               "patient_concerne": "adherent | conjoint | enfant | nouveau_ne",
               "details_lignes": [
-                {
-                  "acte": "Désignation EXACTE (ex: NUMÉRATION FORMULE SANGUINE, GLYCÉMIE À JEUN)",
-                  "code_acte": "Code CNAM si visible (ex: BCA000010)",
-                  "lettre_cle": "B",
-                  "cotation": "Nombre (ex: 60 pour B60)",
-                  "montant": "Montant de cette ligne"
-                }
+                {"acte": "Désignation EXACTE", "code_acte": "...", "lettre_cle": "B", "cotation": "...", "montant": "..."}
               ],
-              "montant": "Montant Total facturé pour cet acte labo",
-              "montant_cnam": "Montant REMBOURSÉ par CNAM — depuis décompte CNAM ou décision prise en charge. JAMAIS depuis facture.",
+              "montant": "Montant total facturé",
+              "montant_cnam": "Montant REMBOURSÉ CNAM — décompte > décision. JAMAIS depuis facture/relevé.",
               "accord_prealable": false,
               "confiance": "haute | moyenne | faible",
               "observations": ""
@@ -1080,54 +1009,47 @@ Retourne UNIQUEMENT ce JSON :
               "praticien": "Nom du dentiste",
               "matricule_fiscale": "MF du dentiste",
               "patient_concerne": "adherent | conjoint | enfant",
-              "type_soin_dentaire": "DC pour SOINS DENTAIRES (partie haute du formulaire), DP pour PROTHESE DENTAIRE (partie basse)",
-              "dents": "Numéros des dents traitées (ex: 11, 21, 36)",
-              "acte": "Désignation EXACTE (ex: Détartrage, Extraction, Prothèse dentaire)",
+              "type_soin_dentaire": "DC (soins, partie haute) | DP (prothèse, partie basse)",
+              "dents": "Numéros des dents (ex: 11, 21, 36)",
+              "acte": "Désignation EXACTE",
               "lettre_cle": "D",
-              "cotation": "Nombre après la lettre-clé (ex: 40 pour D40)",
+              "cotation": "Nombre après D (ex: 40)",
               "montant": "Honoraires",
-              "montant_cnam": "Montant REMBOURSÉ par CNAM — depuis décompte CNAM ou décision prise en charge. JAMAIS depuis facture.",
+              "montant_cnam": "Montant REMBOURSÉ CNAM — décompte > décision. JAMAIS depuis facture/relevé.",
               "accord_prealable": false,
               "confiance": "haute | moyenne | faible",
               "observations": ""
             },
             {
               "type": "OPTIQUE",
-              "date": "Date de l'acte",
-              "praticien": "Nom de l'opticien/lunettier",
-              "matricule_fiscale": "MF de l'opticien",
+              "date": "...",
+              "praticien": "Nom de l'opticien",
+              "matricule_fiscale": "...",
               "patient_concerne": "adherent | conjoint | enfant",
               "acte": "Monture + Verres optiques",
               "details_lignes": [
-                {
-                  "designation": "Désignation EXACTE (ex: Monture optique, Verres progressifs, Traitement anti-reflet)",
-                  "quantite": "Quantité",
-                  "montant": "Montant"
-                }
+                {"designation": "...", "quantite": "...", "montant": "..."}
               ],
-              "prescription_optique": {
-                "oeil_droit": "Correction OD (ex: +0.25 (-0.25 à 5°))",
-                "oeil_gauche": "Correction OG (ex: 0.00 (-0.50 à 175°))"
-              },
+              "prescription_optique": {"oeil_droit": "Correction OD", "oeil_gauche": "Correction OG"},
               "montant": "Total TTC de la facture",
-              "montant_cnam": "Montant REMBOURSÉ par CNAM — depuis décompte CNAM ou décision prise en charge. JAMAIS depuis facture.",
+              "montant_cnam": "Montant REMBOURSÉ CNAM — décompte > décision. JAMAIS depuis facture/relevé.",
               "accord_prealable": false,
               "confiance": "haute | moyenne | faible",
               "observations": ""
             },
             {
               "type": "PARAMEDICAL",
-              "date": "Date de l'acte",
-              "praticien": "Nom du praticien paramédical (kiné, sage-femme, infirmier)",
-              "matricule_fiscale": "MF du praticien",
+              "date": "...",
+              "praticien": "Nom du praticien (kiné, sage-femme, infirmier)",
+              "matricule_fiscale": "...",
               "patient_concerne": "adherent | conjoint | enfant | nouveau_ne",
-              "acte": "Désignation EXACTE (ex: Rééducation fonctionnelle du genou, Kinésithérapie respiratoire, Séance de rééducation, Soins infirmiers)",
-              "nombre_seances_prescrites": "Nombre de séances prescrites sur l'ordonnance (si visible)",
-              "nombre_seances_realisees": "Nombre de séances réalisées / facturées (si visible)",
-              "lettre_cle": "SC ou SF ou AMO ou AMI ou AMS ou TO ou TM ou APR si visible",
+              "acte": "Désignation EXACTE",
+              "nombre_seances_prescrites": "Si visible",
+              "nombre_seances_realisees": "Si visible",
+              "lettre_cle": "SC | SF | AMO | AMI | AMS | TO | TM | APR si visible",
               "cotation": "Nombre après la lettre-clé",
               "montant": "Honoraires",
-              "montant_cnam": "Montant REMBOURSÉ par CNAM — depuis décompte CNAM ou décision prise en charge. JAMAIS depuis facture.",
+              "montant_cnam": "Montant REMBOURSÉ CNAM — décompte > décision. JAMAIS depuis facture/relevé.",
               "accord_prealable": false,
               "confiance": "haute | moyenne | faible",
               "observations": ""
@@ -1370,42 +1292,27 @@ Retourne UNIQUEMENT ce JSON :
         }
 
 RÈGLES COMPLÉMENTAIRES :
-- beneficiaire_coche : case cochée (✓/✗/remplie) → "Adhérent"/"Conjoint"/"Enfant". Défaut: "Adhérent".
-- conjoint.nom_prenom : UNIQUEMENT si case "Conjoint" cochée.
-- enfants : UNIQUEMENT si case "Enfant" cochée, sinon [].
-- mode_paiement : mention "Tiers Payant" → "tiers_payant", sinon "remboursement". Incertain → "".
-- cachet_employeur / signature_presente : true si visible sur le bulletin, false si absent.
-  ATTENTION : la signature de l'assuré est souvent en BAS À DROITE du recto du BS (champ "SIGNATURE DE L'ASSURÉ" / "Signature de l'adhérent"). C'est un griffonnage manuscrit — ne pas le confondre avec du texte. Si TOUT trait manuscrit ressemblant à une signature est visible → true.
-  Le cachet employeur est un TAMPON (rond ou rectangulaire) de l'entreprise, souvent au VERSO du BS.
-- apci : DÉTECTER via 3 sources possibles :
-  1) CHECKBOX "APCI" sur le BS (en haut de la face professionnelle, champ "Soins effectués dans le cadre de : APCI"). Si coché → apci.
-  2) CERTIFICAT MÉDICAL CONFIDENTIEL mentionnant une pathologie chronique (cancer, diabète, insuffisance rénale, etc.) → extraire pathologie dans apci.pathologies.
-  3) DÉCOMPTE CNAM avec "Régime: APCI" ou "ALD" → apci.
-  Si aucune de ces 3 sources → ne pas inclure apci.
-- conventionne : si mention "conventionné"/"hors convention" visible → "oui"/"non". Sinon "".
-  Une DÉCISION DE PRISE EN CHARGE mentionnant "clinique privée conventionnée" ou
-  "valable qu'auprès des médecins et cliniques conventionnées" → conventionne = "oui"
-  pour l'hospitalisation concernée.
-- nombre_seances : PARAMEDICAL → extraire séances prescrites (ordonnance) et réalisées (facture). Si non visible → "".
-- cnam : UNIQUEMENT si décompte CNAM présent. Sinon ne pas inclure.
-- releve_assureur : UNIQUEMENT si un relevé d'assureur privé est présent. Sinon ne pas inclure.
-- pieces_justificatives : UNIQUEMENT sous-clés pertinentes au type (medicaments_prescrits pour ORDONNANCE, resultats_bilan pour BILAN, lettre_confidentielle pour LETTRE_CONFIDENTIELLE, note_honoraires pour NOTE_HONORAIRES, facture_details pour FACTURE clinique, texte_libre pour COMPTE_RENDU/PRISE_EN_CHARGE/CERTIFICAT_MEDICAL/RELEVE_ASSUREUR/AUTRE).
-- numero_adherent ≠ numero_contrat ≠ numero_cnam : 3 champs DISTINCTS. Ne pas confondre. 'Adhésion N°' = numero_adherent. Le numéro en face du label 'Adhésion N°' est TOUJOURS le numero_adherent, quelle que soit sa taille.
-- Si aucun champ "Contrat N°" explicite → numero_contrat = "".
-- numero_cnam : format long (ex: 1688627809, 16536247). Si BS assureur sans champ CNAM visible → "". Une décision CNAM ("Identifiant Unique") est une source valable et plus fiable qu'un manuscrit illisible.
-- CODE CNAM DU PRESTATAIRE ≠ CODE CNAM DU PATIENT : sur le BS, chaque section a un champ "Code CNAM et MF du professionnel de santé" (ex: 1/12896/11). C'est le code du PRATICIEN, PAS du patient. NE JAMAIS le mettre dans numero_cnam. De même sur les tickets pharmacie, "Référence CNAM du pharmacien: 1/xxxxx/xx" est le code du PHARMACIEN.
-- HOSPITALISATION SECTIONS : répartir lignes dans sejour/bloc_operatoire/pharmacie_interne/autres_frais. Chaque section a lignes[] + total. AUCUNE ligne AJUSTEMENT.
-- HOSPITALISATION COMPTE D'AUTRUI → ACTES SÉPARÉS : chaque prestataire externe → acte indépendant avec rattachement_hospitalisation (0-based) et role_intervention. Clinique garde UNIQUEMENT ses sections groupées, SANS le compte_autrui.
-- HOSPITALISATION ACCORD PRÉALABLE : si décision de prise en charge → accord_prealable: true + accord_prealable_details (même si le forfait est vide).
-- DENTAIRE : type_soin_dentaire = "DC" (soins) ou "DP" (prothèse). Lettre-clé = D.
-- OPTIQUE : type "OPTIQUE" (JAMAIS "PARAMEDICAL"). Séparer monture/verres dans details_lignes + prescription_optique.
-- COMPTE-RENDU = PIÈCE + ACTE : générer l'acte correspondant (RADIOLOGIE/MEDECIN/LABORATOIRE). GARDE-FOU ANTI-DOUBLON : si acte existe déjà → rattacher via rattachement_acte, NE PAS dupliquer.
-- NOTE D'HONORAIRES = PIÈCE + ACTE : générer l'acte promu correspondant avec role_intervention. GARDE-FOU ANTI-DOUBLON : si le praticien figure DÉJÀ dans le compte d'autrui de la facture avec le MÊME montant → ne pas dupliquer, enrichir l'acte existant (role_intervention, numero_note, MF). Si les montants DIFFÈRENT → un seul acte, details_lignes avec les 2 sources, et observation "montant à confirmer".
-- ÉCART COTATION : lettre confidentielle ≠ BS → retenir lettre confidentielle + signaler dans observations.
-- Noms tunisiens : "nekk"→"Mekki", "nohaned"→"Mohamed". Réparer aussi depuis les cachets imprimés et les factures (le cachet imprimé prime sur le manuscrit du BS).
-- matricule_fiscale : format COMPLET avec les slashs : 7 chiffres + "/" + lettre + "/A/" + lettre + "/000" (ex: 1538875N/A/P/000, 1671890K/A/M/000, 1277507N/A/P/000). TOUJOURS inclure les slashs et le suffixe "/000". Si partiel (manque les slashs ou le /000) → compléter depuis le cachet ou la facture (la facture clinique liste souvent les MF complets des praticiens du compte d'autrui : s'en servir pour corriger une lecture partielle du BS). Si introuvable → "".
-- CONTRÔLE FINAL : total_acte_cote + total_clinique_calcule + ecart_ajustements ≈ montant facture (± TVA/timbre). Écart inexpliqué > 1 DT → re-vérifier puis consigner dans controles.anomalies.
-- NE JAMAIS écrire 0 ou 0.000 à la place d'une donnée inconnue. Inconnu = "".
+- beneficiaire_coche : case cochée → "Adhérent"/"Conjoint"/"Enfant". Défaut: "Adhérent".
+- conjoint/enfants : UNIQUEMENT si case correspondante cochée, sinon vide/[].
+- mode_paiement : "Tiers Payant" visible → "tiers_payant", sinon "remboursement". Incertain → "".
+- cachet_employeur : TAMPON entreprise (rond/rectangulaire), souvent VERSO. true/false.
+- signature_presente : griffonnage manuscrit BAS À DROITE du recto ("SIGNATURE DE L'ASSURÉ"). Tout trait manuscrit → true.
+- apci : 3 sources : 1) CHECKBOX "APCI" BS 2) CERTIFICAT pathologie chronique 3) DÉCOMPTE "Régime: APCI/ALD". Aucune → ne pas inclure.
+- conventionne : "conventionné" visible → "oui", "hors convention" → "non". Décision CNAM "clinique conventionnée" → "oui". Sinon "".
+- nombre_seances : PARAMEDICAL, prescrites + réalisées. Non visible → "".
+- cnam : UNIQUEMENT si décompte CNAM présent. releve_assureur : UNIQUEMENT si relevé présent.
+- pieces_justificatives : UNIQUEMENT sous-clés pertinentes au type_piece.
+- numero_adherent ≠ numero_contrat ≠ numero_cnam : 3 champs DISTINCTS. 'Adhésion N°' = numero_adherent TOUJOURS.
+- numero_cnam : format long. Décision CNAM ("Identifiant Unique") = source fiable. Code CNAM prestataire (1/12896/11) = code du PRATICIEN, JAMAIS dans numero_cnam.
+- HOSPITALISATION : répartir dans sejour/bloc/pharmacie_interne/autres_frais. Compte d'autrui → actes séparés. Décision → accord_prealable: true.
+- DENTAIRE : DC (soins) / DP (prothèse), lettre D. OPTIQUE : type "OPTIQUE" jamais "PARAMEDICAL".
+- COMPTE-RENDU = PIÈCE + ACTE. Anti-doublon : acte existant → rattacher, ne pas dupliquer.
+- NOTE D'HONORAIRES = PIÈCE + ACTE. Même praticien dans compte d'autrui : même montant → doublon, montants différents → 1 acte 2 sources.
+- ÉCART COTATION : lettre confidentielle prime sur BS.
+- Noms tunisiens : "nekk"→"Mekki", "nohaned"→"Mohamed". Cachet imprimé prime sur manuscrit BS.
+- matricule_fiscale : format COMPLET 7chiffres/lettre/A/lettre/000 (ex: 1538875N/A/P/000). Si partiel → compléter depuis cachet/facture.
+- CONTRÔLE FINAL : total_acte_cote + total_clinique_calcule + ecart_ajustements ≈ montant facture (± TVA/timbre). Écart > 1 DT → consigner.
+- NE JAMAIS écrire 0 ou 0.000 pour une donnée inconnue. Inconnu = "".
 Si champ introuvable → "". Pas de balises Markdown.`;
 
 // ─────────────────────────────────────────────
