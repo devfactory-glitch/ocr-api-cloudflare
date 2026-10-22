@@ -1338,6 +1338,13 @@ Retourne UNIQUEMENT ce JSON :
             "notes_cotation": ["C12 — écarts informatifs entre cotation facturée et cotation de la nomenclature"],
             "anomalies": ["Toute autre anomalie détectée"]
           },
+          "document_fingerprint": {
+            "template_hash": "Description concise et DÉTERMINISTE du template/formulaire : type (BS CNAM, facture clinique, décompte…), en-tête, nombre de colonnes, zones pré-imprimées, logo, couleurs dominantes. Deux scans du MÊME formulaire vierge doivent produire la MÊME description.",
+            "handwriting_profile": "Caractéristiques de l'écriture manuscrite visible : style (cursif/script/mixte), inclinaison (droite/gauche/verticale), taille relative (petit/moyen/grand), régularité (régulier/irrégulier). null si aucune écriture manuscrite.",
+            "stamp_visual": "Description visuelle du cachet/tampon principal : forme (rond/rectangulaire/ovale), couleur encre, texte visible, position sur le document. null si aucun cachet.",
+            "layout_signature": "Séquence ordonnée des zones remplies de haut en bas, séparées par '|'. Ex: 'header|patient_info|3_act_lines|totals|stamp_bottom_right|signature_bottom_left'",
+            "content_structure_hash": "Résumé structurel du contenu textuel SANS les champs d'identité (nom patient, numéro assuré, dates de naissance). Garder UNIQUEMENT : montants, codes actes, quantités, texte pré-imprimé du formulaire."
+          },
           "document_integrity": {
             "stamp_analysis": {
               "detected": "true si au moins un cachet de prestataire est visible sur le BS ou les pièces, false sinon",

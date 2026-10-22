@@ -828,7 +828,7 @@ async function analyseSingleDossier(env, files, fewShotExamples) {
     // Post-traitement 3 : corriger l'identité depuis le référentiel adhérents (DB)
     if (env.DB) data = await enrichFromReferentiel(env.DB, data);
     data = postProcess(data);
-    // Post-traitement 4 : intégrité documentaire (antifraude S8-S11) — fire-and-forget
+    /// Post-traitement 4 : antifraude S8-S11 + S58 fingerprint — fire-and-forget
     try { data = enrichDocumentIntegrity(data); } catch { /* jamais bloquer l'OCR */ }
   }
 

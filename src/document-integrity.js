@@ -1,37 +1,52 @@
 // src/document-integrity.js
-// Module isolé — Analyse d'intégrité documentaire (Antifraude CdCF S8-S11)
+// Module isolé — Antifraude CdCF S8-S11 + S58 (fingerprint)
 // Zero impact sur le pipeline OCR existant.
-// S58 (clones visuels) nécessite un pHash impossible sur Workers — délégué à Dhamen.
 
 // ─────────────────────────────────────────────
 // Normaliser document_integrity retourné par Gemini.
 // Si Gemini ne l'a pas rempli, ne rien forcer.
 // ─────────────────────────────────────────────
 export function enrichDocumentIntegrity(data) {
-  if (!data?.document_integrity) return data;
+  if (!data) return data;
 
+  // S8-S11 : normaliser document_integrity
   const di = data.document_integrity;
+  if (di) {
+    if (di.stamp_analysis) {
+      di.stamp_analysis.detected = toBool(di.stamp_analysis.detected);
+      di.stamp_analysis.confidence = toConfidence(di.stamp_analysis.confidence);
+    }
+    if (di.signature_analysis) {
+      di.signature_analysis.detected = toBool(di.signature_analysis.detected);
+      di.signature_analysis.confidence = toConfidence(di.signature_analysis.confidence);
+    }
+    if (di.manuscript_addition) {
+      di.manuscript_addition.detected = toBool(di.manuscript_addition.detected);
+      di.manuscript_addition.confidence = toConfidence(di.manuscript_addition.confidence);
+      if (!Array.isArray(di.manuscript_addition.zones)) di.manuscript_addition.zones = [];
+    }
+    if (di.forgery_analysis) {
+      di.forgery_analysis.suspected = toBool(di.forgery_analysis.suspected);
+      di.forgery_analysis.confidence = toConfidence(di.forgery_analysis.confidence);
+      if (!Array.isArray(di.forgery_analysis.suspicious_zones)) di.forgery_analysis.suspicious_zones = [];
+    }
+  }
 
-  if (di.stamp_analysis) {
-    di.stamp_analysis.detected = toBool(di.stamp_analysis.detected);
-    di.stamp_analysis.confidence = toConfidence(di.stamp_analysis.confidence);
-  }
-  if (di.signature_analysis) {
-    di.signature_analysis.detected = toBool(di.signature_analysis.detected);
-    di.signature_analysis.confidence = toConfidence(di.signature_analysis.confidence);
-  }
-  if (di.manuscript_addition) {
-    di.manuscript_addition.detected = toBool(di.manuscript_addition.detected);
-    di.manuscript_addition.confidence = toConfidence(di.manuscript_addition.confidence);
-    if (!Array.isArray(di.manuscript_addition.zones)) di.manuscript_addition.zones = [];
-  }
-  if (di.forgery_analysis) {
-    di.forgery_analysis.suspected = toBool(di.forgery_analysis.suspected);
-    di.forgery_analysis.confidence = toConfidence(di.forgery_analysis.confidence);
-    if (!Array.isArray(di.forgery_analysis.suspicious_zones)) di.forgery_analysis.suspicious_zones = [];
+  // S58 : normaliser document_fingerprint (5 champs string|null)
+  if (data.document_fingerprint) {
+    const fp = data.document_fingerprint;
+    for (const key of ["template_hash", "handwriting_profile", "stamp_visual", "layout_signature", "content_structure_hash"]) {
+      fp[key] = toStringOrNull(fp[key]);
+    }
   }
 
   return data;
+}
+
+// Gemini peut retourner undefined, null, ou un string
+function toStringOrNull(val) {
+  if (val == null || val === "") return null;
+  return typeof val === "string" ? val.trim() : String(val);
 }
 
 // Gemini peut retourner true, "true", "false", false
